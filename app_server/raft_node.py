@@ -61,6 +61,10 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
 
         print(f"[{self.node_id}] Initialized as Follower in Term {self.current_term}")
 
+        self.on_apply_callbacks = []
+
+        print(f"[{self.node_id}] Initialized as Follower in Term {self.current_term}")
+
     def _get_new_election_timeout(self):
         return random.uniform(ELECTION_TIMEOUT_MIN, ELECTION_TIMEOUT_MAX)
 
@@ -258,12 +262,44 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
             try:
                 parts = entry.command.split('|')
                 cmd_type = parts[0]
+
                 if cmd_type == "CREATE":
-                    self.document_manager.create_document(username=parts[1], content=parts[2])
+                    doc_id, username, content = parts[1], parts[2], parts[3]
+                    self.document_manager.create_document(doc_id, username, content)
+                    self._notify_listeners("CREATE", doc_id, username, content)
+
                 elif cmd_type == "UPDATE":
-                    self.document_manager.update_document(doc_id=parts[1], content=parts[2], username=parts[3])
+                    doc_id, content, username = parts[1], parts[2], parts[3]
+                    # Raft just applies it. The DocumentManager decides if it's valid.
+                    # In a real system, we might want to log failed applications too.
+                    success = self.document_manager.update_document(doc_id, content, username)
+                    if success:
+                        self._notify_listeners("UPDATE", doc_id, username, content)
+
+                # --- NEW COMMANDS ---
+                elif cmd_type == "LOCK":
+                    # Format: LOCK|doc_id|username
+                    doc_id, username = parts[1], parts[2]
+                    if self.document_manager.acquire_lock(doc_id, username):
+                        self._notify_listeners("LOCK", doc_id, username, "")
+
+                elif cmd_type == "UNLOCK":
+                    # Format: UNLOCK|doc_id|username
+                    doc_id, username = parts[1], parts[2]
+                    if self.document_manager.release_lock(doc_id, username):
+                        self._notify_listeners("UNLOCK", doc_id, username, "")
+                # --------------------
+
             except Exception as e:
                 print(f"[{self.node_id}] Error applying log: {e}")
+
+    # NEW Helper method
+    def _notify_listeners(self, op_type, doc_id, user, content):
+        for callback in self.on_apply_callbacks:
+            try:
+                callback(op_type, doc_id, user, content)
+            except Exception as e:
+                print(f"Error in on_apply_callback: {e}")
 
     def _step_down(self, new_term):
         """MUST be called *while holding self.lock*."""

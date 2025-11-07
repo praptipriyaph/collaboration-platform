@@ -10,7 +10,6 @@ class CollaborationServiceStub(object):
     Service Definitions
     -----------------------------------------------------------------
 
-    Client Service
     """
 
     def __init__(self, channel):
@@ -39,6 +38,11 @@ class CollaborationServiceStub(object):
                 request_serializer=service__pb2.GetRequest.SerializeToString,
                 response_deserializer=service__pb2.GetResponse.FromString,
                 )
+        self.Subscribe = channel.unary_stream(
+                '/collaboration.CollaborationService/Subscribe',
+                request_serializer=service__pb2.SubscribeRequest.SerializeToString,
+                response_deserializer=service__pb2.UpdateEvent.FromString,
+                )
 
 
 class CollaborationServiceServicer(object):
@@ -46,7 +50,6 @@ class CollaborationServiceServicer(object):
     Service Definitions
     -----------------------------------------------------------------
 
-    Client Service
     """
 
     def Login(self, request, context):
@@ -69,6 +72,13 @@ class CollaborationServiceServicer(object):
 
     def Get(self, request, context):
         """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Subscribe(self, request, context):
+        """NEW: Server streaming RPC
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -96,6 +106,11 @@ def add_CollaborationServiceServicer_to_server(servicer, server):
                     request_deserializer=service__pb2.GetRequest.FromString,
                     response_serializer=service__pb2.GetResponse.SerializeToString,
             ),
+            'Subscribe': grpc.unary_stream_rpc_method_handler(
+                    servicer.Subscribe,
+                    request_deserializer=service__pb2.SubscribeRequest.FromString,
+                    response_serializer=service__pb2.UpdateEvent.SerializeToString,
+            ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
             'collaboration.CollaborationService', rpc_method_handlers)
@@ -108,7 +123,6 @@ class CollaborationService(object):
     Service Definitions
     -----------------------------------------------------------------
 
-    Client Service
     """
 
     @staticmethod
@@ -179,10 +193,26 @@ class CollaborationService(object):
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
+    @staticmethod
+    def Subscribe(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(request, target, '/collaboration.CollaborationService/Subscribe',
+            service__pb2.SubscribeRequest.SerializeToString,
+            service__pb2.UpdateEvent.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
 
 class LLMServiceStub(object):
-    """LLM Service
-    """
+    """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
         """Constructor.
@@ -198,8 +228,7 @@ class LLMServiceStub(object):
 
 
 class LLMServiceServicer(object):
-    """LLM Service
-    """
+    """Missing associated documentation comment in .proto file."""
 
     def GetLLMAnswer(self, request, context):
         """Missing associated documentation comment in .proto file."""
@@ -223,8 +252,7 @@ def add_LLMServiceServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class LLMService(object):
-    """LLM Service
-    """
+    """Missing associated documentation comment in .proto file."""
 
     @staticmethod
     def GetLLMAnswer(request,
@@ -245,8 +273,7 @@ class LLMService(object):
 
 
 class RaftServiceStub(object):
-    """The Raft Consensus Service
-    """
+    """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
         """Constructor.
@@ -267,8 +294,7 @@ class RaftServiceStub(object):
 
 
 class RaftServiceServicer(object):
-    """The Raft Consensus Service
-    """
+    """Missing associated documentation comment in .proto file."""
 
     def RequestVote(self, request, context):
         """Missing associated documentation comment in .proto file."""
@@ -303,8 +329,7 @@ def add_RaftServiceServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class RaftService(object):
-    """The Raft Consensus Service
-    """
+    """Missing associated documentation comment in .proto file."""
 
     @staticmethod
     def RequestVote(request,

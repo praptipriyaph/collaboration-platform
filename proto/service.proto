@@ -2,10 +2,6 @@ syntax = "proto3";
 
 package collaboration;
 
-// -----------------------------------------------------------------
-// Message Definitions
-// -----------------------------------------------------------------
-
 // --- Original Service Messages ---
 
 message LoginRequest {
@@ -60,11 +56,26 @@ message LLMResponse {
     string answer = 2;
 }
 
+// --- New Real-time Streaming Messages ---
+
+message SubscribeRequest {
+    string token = 1;
+}
+
+message UpdateEvent {
+    // "CREATE" or "UPDATE"
+    string type = 1;
+    string doc_id = 2;
+    string user = 3;
+    string content = 4;
+    // We can also use this for presence: "JOIN", "LEAVE"
+}
+
 // --- Raft Service Messages ---
 
 message RequestVoteArgs {
     int32 term = 1;
-    string candidate_id = 2; // The node requesting the vote
+    string candidate_id = 2;
     int32 last_log_index = 3;
     int32 last_log_term = 4;
 }
@@ -76,9 +87,6 @@ message RequestVoteReply {
 
 message LogEntry {
     int32 term = 1;
-    // The command to be applied to the state machine
-    // e.g., "CREATE|user1|Hello World"
-    // e.g., "UPDATE|doc-uuid|New Content|user1"
     string command = 2;
 }
 
@@ -101,20 +109,19 @@ message AppendEntriesReply {
 // Service Definitions
 // -----------------------------------------------------------------
 
-// Client Service
 service CollaborationService {
     rpc Login(LoginRequest) returns (LoginResponse);
     rpc Logout(LogoutRequest) returns (StatusResponse);
     rpc Post(PostRequest) returns (StatusResponse);
     rpc Get(GetRequest) returns (GetResponse);
+    // NEW: Server streaming RPC
+    rpc Subscribe(SubscribeRequest) returns (stream UpdateEvent);
 }
 
-// LLM Service
 service LLMService {
     rpc GetLLMAnswer(LLMRequest) returns (LLMResponse);
 }
 
-// The Raft Consensus Service
 service RaftService {
     rpc RequestVote(RequestVoteArgs) returns (RequestVoteReply);
     rpc AppendEntries(AppendEntriesArgs) returns (AppendEntriesReply);
