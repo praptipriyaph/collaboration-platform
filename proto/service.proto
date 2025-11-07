@@ -1,0 +1,121 @@
+syntax = "proto3";
+
+package collaboration;
+
+// -----------------------------------------------------------------
+// Message Definitions
+// -----------------------------------------------------------------
+
+// --- Original Service Messages ---
+
+message LoginRequest {
+    string username = 1;
+    string password = 2;
+}
+
+message LoginResponse {
+    string status = 1;
+    string token = 2;
+}
+
+message LogoutRequest {
+    string token = 1;
+}
+
+message StatusResponse {
+    string status = 1;
+    string message = 2;
+}
+
+message PostRequest {
+    string token = 1;
+    string type = 2;
+    string data = 3;
+}
+
+message GetRequest {
+    string token = 1;
+    string type = 2;
+    string params = 3;
+}
+
+message DataItem {
+    string id = 1;
+    string data = 2;
+}
+
+message GetResponse {
+    string status = 1;
+    repeated DataItem items = 2;
+}
+
+message LLMRequest {
+    string request_id = 1;
+    string query = 2;
+    string context = 3;
+}
+
+message LLMResponse {
+    string request_id = 1;
+    string answer = 2;
+}
+
+// --- Raft Service Messages ---
+
+message RequestVoteArgs {
+    int32 term = 1;
+    string candidate_id = 2; // The node requesting the vote
+    int32 last_log_index = 3;
+    int32 last_log_term = 4;
+}
+
+message RequestVoteReply {
+    int32 term = 1;
+    bool vote_granted = 2;
+}
+
+message LogEntry {
+    int32 term = 1;
+    // The command to be applied to the state machine
+    // e.g., "CREATE|user1|Hello World"
+    // e.g., "UPDATE|doc-uuid|New Content|user1"
+    string command = 2;
+}
+
+message AppendEntriesArgs {
+    int32 term = 1;
+    string leader_id = 2;
+    int32 prev_log_index = 3;
+    int32 prev_log_term = 4;
+    repeated LogEntry entries = 5;
+    int32 leader_commit = 6;
+}
+
+message AppendEntriesReply {
+    int32 term = 1;
+    bool success = 2;
+    int32 match_index = 3;
+}
+
+// -----------------------------------------------------------------
+// Service Definitions
+// -----------------------------------------------------------------
+
+// Client Service
+service CollaborationService {
+    rpc Login(LoginRequest) returns (LoginResponse);
+    rpc Logout(LogoutRequest) returns (StatusResponse);
+    rpc Post(PostRequest) returns (StatusResponse);
+    rpc Get(GetRequest) returns (GetResponse);
+}
+
+// LLM Service
+service LLMService {
+    rpc GetLLMAnswer(LLMRequest) returns (LLMResponse);
+}
+
+// The Raft Consensus Service
+service RaftService {
+    rpc RequestVote(RequestVoteArgs) returns (RequestVoteReply);
+    rpc AppendEntries(AppendEntriesArgs) returns (AppendEntriesReply);
+}
