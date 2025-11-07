@@ -2,3 +2,7 @@ grpcio==1.60.0
 grpcio-tools==1.60.0
 transformers==4.36.0
 torch==2.1.0
+
+# New dependencies for LLM
+ctransformers>=0.2.27
+numpy>=1.20.0
