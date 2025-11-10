@@ -20,3 +20,5 @@ env/
 .DS_Store
 
 models/*.gguf
+
+raft_state_localhost_*.json
