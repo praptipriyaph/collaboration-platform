@@ -212,11 +212,35 @@ class CollaborationClient:
             print("\n=== Active Users ===")
             for item in res.items: print(f"• {item.data}")
 
-    def query_llm(self, query):
+    def query_llm(self, query, context=""):
         if not self.token: return
-        res = self._execute_rpc("Get", service_pb2.GetRequest(token=self.token, type="llm_query", params=query))
+        # Pass the new 'context' argument to the RPC
+        req = service_pb2.GetRequest(token=self.token, type="llm_query", params=query, context=context)
+        res = self._execute_rpc("Get", req)
         if res and res.status == "SUCCESS" and res.items:
             print(f"\n=== LLM Response ===\n{res.items[0].data}")
+
+    def summarize_document(self, doc_id):
+        print(f"Fetching content for document {doc_id}...")
+        req = service_pb2.GetRequest(token=self.token, type="document_content", params=doc_id)
+        res = self._execute_rpc("Get", req)
+        if res and res.status == "SUCCESS" and res.items:
+            content = res.items[0].data
+            print("Content fetched. Asking LLM to summarize...")
+            self.query_llm(query="Summarize this document in 3 concise bullet points.", context=content)
+        else:
+            print("✗ Failed to fetch document content.")
+
+    def fix_grammar(self, doc_id):
+        print(f"Fetching content for document {doc_id}...")
+        req = service_pb2.GetRequest(token=self.token, type="document_content", params=doc_id)
+        res = self._execute_rpc("Get", req)
+        if res and res.status == "SUCCESS" and res.items:
+            content = res.items[0].data
+            print("Content fetched. Asking LLM to fix grammar...")
+            self.query_llm(query="Fix grammar/spelling. Output ONLY the corrected text.", context=content)
+        else:
+            print("✗ Failed to fetch document content.")
 
     def interactive_menu(self):
         while True:
@@ -234,10 +258,12 @@ class CollaborationClient:
                 print("2. Update Document")  # NEW
                 print("3. View All Documents")
                 print("4. View Active Users")
-                print("5. Query LLM")
-                print("6. Lock/Unlock Document")
-                print("7. Logout")
-                print("8. Exit")
+                print("5. Query LLM (Generic - not context aware queries)")
+                print("6. Summarize Document (Context aware queries)")
+                print("7. Fix Grammar (Context aware queries)")
+                print("8. Lock/Unlock Document")
+                print("9. Logout")
+                print("10. Exit")
 
                 choice = input("\nChoice: ")
                 if choice == "1":
@@ -250,16 +276,22 @@ class CollaborationClient:
                     self.get_active_users()
                 elif choice == "5":
                     self.query_llm(input("Enter your query: "))
+
                 elif choice == "6":
+                    self.summarize_document(input("Enter Doc ID: "))
+                elif choice == "7":
+                    self.fix_grammar(input("Enter Doc ID: "))
+
+                elif choice == "8":
                     action = input("Enter 'l' to lock or 'u' to unlock: ").lower()
                     doc_id = input("Enter Document ID: ")
                     if action == 'l':
                         self.lock_document(doc_id)
                     elif action == 'u':
                         self.unlock_document(doc_id)
-                elif choice == "7":
+                elif choice == "9":
                     self.logout()
-                elif choice == "8":
+                elif choice == "10":
                     if self.token: self.logout()
                     break
 

@@ -33,6 +33,7 @@ message GetRequest {
     string token = 1;
     string type = 2;
     string params = 3;
+    string context = 4;
 }
 
 message DataItem {

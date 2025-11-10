@@ -2,6 +2,8 @@ import grpc
 import threading
 import time
 import random
+import json
+import os
 import service_pb2
 import service_pb2_grpc
 from app_server.document_manager import DocumentManager
@@ -18,8 +20,7 @@ RPC_TIMEOUT = 0.5  # 500ms for RPCs
 class RaftNode(service_pb2_grpc.RaftServiceServicer):
     """
     Implements the Raft consensus logic and the RaftService gRPC servicer.
-    This version uses a stable, long-lived thread pool for outgoing RPCs
-    to prevent resource starvation.
+    Includes disk persistence for reliable recovery.
     """
 
     def __init__(self, node_id, peer_ids, document_manager):
@@ -27,10 +28,18 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
         self.peer_ids = peer_ids
         self.document_manager = document_manager
 
+        # --- Persistent State Storage File ---
+        # Creates a unique filename like 'raft_state_localhost_50053.json'
+        self.storage_file = f"raft_state_{node_id.replace(':', '_')}.json"
+
         # --- Persistent Raft State ---
         self.current_term = 0
         self.voted_for = None
         self.log = []
+
+        # LOAD STATE FROM DISK IF EXISTS
+        # This must be called BEFORE volatile state is set up
+        self._load_state()
 
         # --- Volatile Raft State ---
         self.commit_index = -1
@@ -48,37 +57,73 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
             channel = grpc.insecure_channel(peer)
             self.peer_stubs[peer] = service_pb2_grpc.RaftServiceStub(channel)
 
-        # --- THIS IS THE FIX ---
+        # --- RPC Thread Pool ---
         # Create one, long-lived thread pool for all outgoing RPCs.
         # The number of workers should be proportional to peers.
         self.rpc_executor = ThreadPoolExecutor(max_workers=len(self.peer_ids) * 2 + 1)
-        # --- END FIX ---
 
         # --- Timers and Locks ---
         self.lock = threading.Lock()
         self.election_timeout = self._get_new_election_timeout()
         self.last_heartbeat = time.time()
 
-        print(f"[{self.node_id}] Initialized as Follower in Term {self.current_term}")
-
         self.on_apply_callbacks = []
 
         print(f"[{self.node_id}] Initialized as Follower in Term {self.current_term}")
+
+    # -------------------------------------------------
+    # Persistence Helpers
+    # -------------------------------------------------
+
+    def _save_state(self):
+        """Saves current_term, voted_for, and log to disk."""
+        # Convert generic LogEntry protobufs to simple dicts for JSON serialization
+        log_data = [{'term': e.term, 'command': e.command} for e in self.log]
+        state = {
+            'current_term': self.current_term,
+            'voted_for': self.voted_for,
+            'log': log_data
+        }
+        try:
+            with open(self.storage_file, 'w') as f:
+                json.dump(state, f)
+        except Exception as e:
+            print(f"[{self.node_id}] ⚠️ Failed to save state: {e}")
+
+    def _load_state(self):
+        """Loads state from disk on startup."""
+        if os.path.exists(self.storage_file):
+            try:
+                with open(self.storage_file, 'r') as f:
+                    state = json.load(f)
+                    self.current_term = state.get('current_term', 0)
+                    self.voted_for = state.get('voted_for')
+                    # Reconstruct protobuf objects from loaded dicts
+                    self.log = []
+                    for entry_data in state.get('log', []):
+                        self.log.append(service_pb2.LogEntry(
+                            term=entry_data['term'],
+                            command=entry_data['command']
+                        ))
+                print(f"[{self.node_id}] 💾 Loaded persisted state: Term {self.current_term}, Log size {len(self.log)}")
+            except Exception as e:
+                print(f"[{self.node_id}] ⚠️ Failed to load state: {e}")
+        else:
+            print(f"[{self.node_id}] No persistent state found. Starting fresh.")
+
+    # -------------------------------------------------
+    # Raft Core Logic
+    # -------------------------------------------------
 
     def _get_new_election_timeout(self):
         return random.uniform(ELECTION_TIMEOUT_MIN, ELECTION_TIMEOUT_MAX)
 
     def _get_last_log_index_term(self):
-        # This is a small helper, no need for lock
         if not self.log:
             return -1, 0
         last_index = len(self.log) - 1
         last_term = self.log[last_index].term
         return last_index, last_term
-
-    # -------------------------------------------------
-    # Main Raft Loop (Runs in a separate thread)
-    # -------------------------------------------------
 
     def run(self):
         """Main loop that drives the node's state."""
@@ -106,6 +151,7 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
         with self.lock:
             self.current_term += 1
             self.voted_for = self.node_id
+            self._save_state()  # PERSIST STATE
             votes_received = 1
             print(f"[{self.node_id}] Starting election for Term {self.current_term}")
 
@@ -123,24 +169,22 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
         )
 
         # --- 2. Send RPCs in Parallel ---
-        # Use the persistent, class-level executor
         futures = {self.rpc_executor.submit(self._request_vote_from_peer, peer, args): peer for peer in self.peer_ids}
 
         # --- 3. Tally Votes ---
         with self.lock:
-            # Check if we're still a candidate for *this* term
             if self.state != "candidate" or self.current_term != election_term:
                 return
 
             for future in futures:
-                reply = future.result()  # Wait for the RPC to return
+                reply = future.result()
                 if reply:
                     if reply.vote_granted:
                         votes_received += 1
 
                     if reply.term > self.current_term:
                         self._step_down(reply.term)
-                        return  # Abort this election
+                        return
 
             # --- 4. Decide Election Outcome ---
             if votes_received > (len(self.peer_ids) + 1) / 2:
@@ -151,55 +195,41 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
                 last_log_index, _ = self._get_last_log_index_term()
                 self.next_index = {peer: last_log_index + 1 for peer in self.peer_ids}
                 self.match_index = {peer: -1 for peer in self.peer_ids}
-
-                # Immediately send heartbeats to establish authority
                 self._run_leader()
             else:
                 print(f"[{self.node_id}] Lost election for Term {election_term}.")
                 self.state = "follower"
 
     def _request_vote_from_peer(self, peer, args):
-        """Sends RequestVote RPC and returns the reply."""
         try:
-            reply = self.peer_stubs[peer].RequestVote(args, timeout=RPC_TIMEOUT)
-            return reply
-        except grpc.RpcError as e:
-            # This is expected if a node is down or busy
+            return self.peer_stubs[peer].RequestVote(args, timeout=RPC_TIMEOUT)
+        except grpc.RpcError:
             return None
 
     def _run_leader(self):
-        """Sends heartbeats/AppendEntries to all followers."""
         if time.time() - self.last_heartbeat < HEARTBEAT_INTERVAL:
             return
 
         with self.lock:
             self.last_heartbeat = time.time()
-            # Check if we are still the leader (might have stepped down)
             if self.state != "leader":
                 return
-
-            # Gather replies
             futures = {self.rpc_executor.submit(self._replicate_log_to_peer, peer): peer for peer in self.peer_ids}
 
-        # Process replies *after* releasing the lock
-        # (The _replicate_log_to_peer function is thread-safe)
         for future in futures:
             reply = future.result()
             if reply:
                 with self.lock:
-                    # Check for higher term
                     if reply.term > self.current_term:
                         self._step_down(reply.term)
-                        return  # Stop being leader
+                        return
 
-        # After all RPCs are done, update commit index
         with self.lock:
             if self.state == "leader":
                 self._update_commit_index()
                 self._apply_log_entries()
 
     def _replicate_log_to_peer(self, peer):
-        """Sends AppendEntries RPC and updates state based on reply."""
         with self.lock:
             if self.state != "leader":
                 return None
@@ -221,9 +251,8 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
             reply = self.peer_stubs[peer].AppendEntries(args, timeout=RPC_TIMEOUT)
 
             with self.lock:
-                # Need to re-check state, might have stepped down
                 if self.state != "leader" or reply.term > self.current_term:
-                    return reply  # Will be handled by _run_leader loop
+                    return reply
 
                 if reply.success:
                     self.next_index[peer] = len(self.log)
@@ -231,8 +260,7 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
                 else:
                     self.next_index[peer] = max(0, self.next_index[peer] - 1)
             return reply
-
-        except grpc.RpcError as e:
+        except grpc.RpcError:
             return None
 
     def _update_commit_index(self):
@@ -242,7 +270,7 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
 
         for N in range(len(self.log) - 1, self.commit_index, -1):
             if self.log[N].term == self.current_term:
-                majority_count = 1  # Self
+                majority_count = 1
                 for peer in self.peer_ids:
                     if self.match_index[peer] >= N:
                         majority_count += 1
@@ -270,30 +298,23 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
 
                 elif cmd_type == "UPDATE":
                     doc_id, content, username = parts[1], parts[2], parts[3]
-                    # Raft just applies it. The DocumentManager decides if it's valid.
-                    # In a real system, we might want to log failed applications too.
                     success = self.document_manager.update_document(doc_id, content, username)
                     if success:
                         self._notify_listeners("UPDATE", doc_id, username, content)
 
-                # --- NEW COMMANDS ---
                 elif cmd_type == "LOCK":
-                    # Format: LOCK|doc_id|username
                     doc_id, username = parts[1], parts[2]
                     if self.document_manager.acquire_lock(doc_id, username):
                         self._notify_listeners("LOCK", doc_id, username, "")
 
                 elif cmd_type == "UNLOCK":
-                    # Format: UNLOCK|doc_id|username
                     doc_id, username = parts[1], parts[2]
                     if self.document_manager.release_lock(doc_id, username):
                         self._notify_listeners("UNLOCK", doc_id, username, "")
-                # --------------------
 
             except Exception as e:
                 print(f"[{self.node_id}] Error applying log: {e}")
 
-    # NEW Helper method
     def _notify_listeners(self, op_type, doc_id, user, content):
         for callback in self.on_apply_callbacks:
             try:
@@ -309,6 +330,7 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
             self.state = "follower"
             self.voted_for = None
             self.leader_id = None
+            self._save_state()  # PERSIST STATE
 
         self.last_heartbeat = time.time()
 
@@ -325,13 +347,13 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
             if request.term == self.current_term and \
                     (self.voted_for is None or self.voted_for == request.candidate_id):
 
-                # Use helper *within* the lock
                 last_log_index, last_log_term = self._get_last_log_index_term()
                 if request.last_log_term > last_log_term or \
                         (request.last_log_term == last_log_term and request.last_log_index >= last_log_index):
                     vote_granted = True
                     self.voted_for = request.candidate_id
-                    self.last_heartkeybeat = time.time()  # Granting vote resets timer
+                    self._save_state()  # PERSIST STATE
+                    self.last_heartbeat = time.time()
 
             return service_pb2.RequestVoteReply(
                 term=self.current_term,
@@ -347,9 +369,8 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
             if request.term == self.current_term:
                 self.state = "follower"
                 self.leader_id = request.leader_id
-                self.last_heartbeat = time.time()  # Valid heartbeat
+                self.last_heartbeat = time.time()
 
-                # Log consistency check
                 if request.prev_log_index == -1 or \
                         (request.prev_log_index < len(self.log) and \
                          self.log[request.prev_log_index].term == request.prev_log_term):
@@ -357,6 +378,7 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
                     success = True
                     self.log = self.log[:request.prev_log_index + 1]
                     self.log.extend(request.entries)
+                    self._save_state()  # PERSIST STATE
 
                     if request.leader_commit > self.commit_index:
                         self.commit_index = min(request.leader_commit, len(self.log) - 1)
@@ -382,10 +404,9 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
                 command=command_str
             )
             self.log.append(log_entry)
+            self._save_state()  # PERSIST STATE
             print(f"[{self.node_id}] Leader received command: {command_str}")
 
-            # Replicate this to peers *immediately* instead of waiting for heartbeat
-            # This is an optimization for faster client response
             self.rpc_executor.submit(self._run_leader)
 
             return True, self.node_id

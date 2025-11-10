@@ -146,15 +146,25 @@ class CollaborationServicer(service_pb2_grpc.CollaborationServiceServicer):
             return service_pb2.StatusResponse(status="SUCCESS", message="Request submitted")
         else:
             return service_pb2.StatusResponse(status="FAILURE", message=f"Not leader. Try connecting to: {leader_id}")
+
     def Get(self, request, context):
-        # (Get implementation remains largely the same, just ensure it uses self.raft_node.document_manager)
         valid, username = self.auth_manager.validate_token(request.token)
         if not valid:
             return service_pb2.GetResponse(status="FAILURE", items=[])
 
         doc_manager = self.raft_node.document_manager
 
-        if request.type == "documents":
+        # --- NEW: Fetch single document content for the client ---
+        if request.type == "document_content":
+             doc_id = request.params
+             doc = doc_manager.get_document(doc_id)
+             if doc:
+                 # Return just the content
+                 return service_pb2.GetResponse(status="SUCCESS", items=[service_pb2.DataItem(id=doc_id, data=doc["content"])])
+             else:
+                 return service_pb2.GetResponse(status="FAILURE", items=[service_pb2.DataItem(id="error", data="Document not found")])
+
+        elif request.type == "documents":
             docs = doc_manager.get_all_documents()
             items = [
                 service_pb2.DataItem(
@@ -163,14 +173,23 @@ class CollaborationServicer(service_pb2_grpc.CollaborationServiceServicer):
                 ) for doc in docs
             ]
             return service_pb2.GetResponse(status="SUCCESS", items=items)
+
         elif request.type == "active_users":
             users = doc_manager.get_active_users()
             items = [service_pb2.DataItem(id=str(i), data=user) for i, user in enumerate(users)]
             return service_pb2.GetResponse(status="SUCCESS", items=items)
+
         elif request.type == "llm_query":
             try:
+                # Use the context sent by the client, or default to generic if missing
+                llm_context = request.context if request.context else "General collaboration system query."
+
                 llm_response = self.llm_stub.GetLLMAnswer(
-                    service_pb2.LLMRequest(request_id=str(uuid.uuid4()), query=request.params, context="Doc system")
+                    service_pb2.LLMRequest(
+                        request_id=str(uuid.uuid4()),
+                        query=request.params,
+                        context=llm_context
+                    )
                 )
                 return service_pb2.GetResponse(status="SUCCESS",
                                                items=[service_pb2.DataItem(id="llm", data=llm_response.answer)])
@@ -178,7 +197,6 @@ class CollaborationServicer(service_pb2_grpc.CollaborationServiceServicer):
                 return service_pb2.GetResponse(status="FAILURE", items=[service_pb2.DataItem(id="error", data=str(e))])
 
         return service_pb2.GetResponse(status="FAILURE", items=[])
-
 
 def serve(node_id, peer_ids):
     # (Same as before, just ensure max_workers is high enough for many subscribers)

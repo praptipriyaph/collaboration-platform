@@ -14,7 +14,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rservice.proto\x12\rcollaboration\"2\n\x0cLoginRequest\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x10\n\x08password\x18\x02 \x01(\t\".\n\rLoginResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12\r\n\x05token\x18\x02 \x01(\t\"\x1e\n\rLogoutRequest\x12\r\n\x05token\x18\x01 \x01(\t\"1\n\x0eStatusResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12\x0f\n\x07message\x18\x02 \x01(\t\"8\n\x0bPostRequest\x12\r\n\x05token\x18\x01 \x01(\t\x12\x0c\n\x04type\x18\x02 \x01(\t\x12\x0c\n\x04\x64\x61ta\x18\x03 \x01(\t\"9\n\nGetRequest\x12\r\n\x05token\x18\x01 \x01(\t\x12\x0c\n\x04type\x18\x02 \x01(\t\x12\x0e\n\x06params\x18\x03 \x01(\t\"$\n\x08\x44\x61taItem\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\t\"E\n\x0bGetResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12&\n\x05items\x18\x02 \x03(\x0b\x32\x17.collaboration.DataItem\"@\n\nLLMRequest\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\r\n\x05query\x18\x02 \x01(\t\x12\x0f\n\x07\x63ontext\x18\x03 \x01(\t\"1\n\x0bLLMResponse\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x0e\n\x06\x61nswer\x18\x02 \x01(\t\"!\n\x10SubscribeRequest\x12\r\n\x05token\x18\x01 \x01(\t\"J\n\x0bUpdateEvent\x12\x0c\n\x04type\x18\x01 \x01(\t\x12\x0e\n\x06\x64oc_id\x18\x02 \x01(\t\x12\x0c\n\x04user\x18\x03 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x04 \x01(\t\"d\n\x0fRequestVoteArgs\x12\x0c\n\x04term\x18\x01 \x01(\x05\x12\x14\n\x0c\x63\x61ndidate_id\x18\x02 \x01(\t\x12\x16\n\x0elast_log_index\x18\x03 \x01(\x05\x12\x15\n\rlast_log_term\x18\x04 \x01(\x05\"6\n\x10RequestVoteReply\x12\x0c\n\x04term\x18\x01 \x01(\x05\x12\x14\n\x0cvote_granted\x18\x02 \x01(\x08\")\n\x08LogEntry\x12\x0c\n\x04term\x18\x01 \x01(\x05\x12\x0f\n\x07\x63ommand\x18\x02 \x01(\t\"\xa4\x01\n\x11\x41ppendEntriesArgs\x12\x0c\n\x04term\x18\x01 \x01(\x05\x12\x11\n\tleader_id\x18\x02 \x01(\t\x12\x16\n\x0eprev_log_index\x18\x03 \x01(\x05\x12\x15\n\rprev_log_term\x18\x04 \x01(\x05\x12(\n\x07\x65ntries\x18\x05 \x03(\x0b\x32\x17.collaboration.LogEntry\x12\x15\n\rleader_commit\x18\x06 \x01(\x05\"H\n\x12\x41ppendEntriesReply\x12\x0c\n\x04term\x18\x01 \x01(\x05\x12\x0f\n\x07success\x18\x02 \x01(\x08\x12\x13\n\x0bmatch_index\x18\x03 \x01(\x05\x32\xee\x02\n\x14\x43ollaborationService\x12\x42\n\x05Login\x12\x1b.collaboration.LoginRequest\x1a\x1c.collaboration.LoginResponse\x12\x45\n\x06Logout\x12\x1c.collaboration.LogoutRequest\x1a\x1d.collaboration.StatusResponse\x12\x41\n\x04Post\x12\x1a.collaboration.PostRequest\x1a\x1d.collaboration.StatusResponse\x12<\n\x03Get\x12\x19.collaboration.GetRequest\x1a\x1a.collaboration.GetResponse\x12J\n\tSubscribe\x12\x1f.collaboration.SubscribeRequest\x1a\x1a.collaboration.UpdateEvent0\x01\x32S\n\nLLMService\x12\x45\n\x0cGetLLMAnswer\x12\x19.collaboration.LLMRequest\x1a\x1a.collaboration.LLMResponse2\xb3\x01\n\x0bRaftService\x12N\n\x0bRequestVote\x12\x1e.collaboration.RequestVoteArgs\x1a\x1f.collaboration.RequestVoteReply\x12T\n\rAppendEntries\x12 .collaboration.AppendEntriesArgs\x1a!.collaboration.AppendEntriesReplyb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rservice.proto\x12\rcollaboration\"2\n\x0cLoginRequest\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x10\n\x08password\x18\x02 \x01(\t\".\n\rLoginResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12\r\n\x05token\x18\x02 \x01(\t\"\x1e\n\rLogoutRequest\x12\r\n\x05token\x18\x01 \x01(\t\"1\n\x0eStatusResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12\x0f\n\x07message\x18\x02 \x01(\t\"8\n\x0bPostRequest\x12\r\n\x05token\x18\x01 \x01(\t\x12\x0c\n\x04type\x18\x02 \x01(\t\x12\x0c\n\x04\x64\x61ta\x18\x03 \x01(\t\"J\n\nGetRequest\x12\r\n\x05token\x18\x01 \x01(\t\x12\x0c\n\x04type\x18\x02 \x01(\t\x12\x0e\n\x06params\x18\x03 \x01(\t\x12\x0f\n\x07\x63ontext\x18\x04 \x01(\t\"$\n\x08\x44\x61taItem\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\t\"E\n\x0bGetResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12&\n\x05items\x18\x02 \x03(\x0b\x32\x17.collaboration.DataItem\"@\n\nLLMRequest\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\r\n\x05query\x18\x02 \x01(\t\x12\x0f\n\x07\x63ontext\x18\x03 \x01(\t\"1\n\x0bLLMResponse\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x0e\n\x06\x61nswer\x18\x02 \x01(\t\"!\n\x10SubscribeRequest\x12\r\n\x05token\x18\x01 \x01(\t\"J\n\x0bUpdateEvent\x12\x0c\n\x04type\x18\x01 \x01(\t\x12\x0e\n\x06\x64oc_id\x18\x02 \x01(\t\x12\x0c\n\x04user\x18\x03 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x04 \x01(\t\"d\n\x0fRequestVoteArgs\x12\x0c\n\x04term\x18\x01 \x01(\x05\x12\x14\n\x0c\x63\x61ndidate_id\x18\x02 \x01(\t\x12\x16\n\x0elast_log_index\x18\x03 \x01(\x05\x12\x15\n\rlast_log_term\x18\x04 \x01(\x05\"6\n\x10RequestVoteReply\x12\x0c\n\x04term\x18\x01 \x01(\x05\x12\x14\n\x0cvote_granted\x18\x02 \x01(\x08\")\n\x08LogEntry\x12\x0c\n\x04term\x18\x01 \x01(\x05\x12\x0f\n\x07\x63ommand\x18\x02 \x01(\t\"\xa4\x01\n\x11\x41ppendEntriesArgs\x12\x0c\n\x04term\x18\x01 \x01(\x05\x12\x11\n\tleader_id\x18\x02 \x01(\t\x12\x16\n\x0eprev_log_index\x18\x03 \x01(\x05\x12\x15\n\rprev_log_term\x18\x04 \x01(\x05\x12(\n\x07\x65ntries\x18\x05 \x03(\x0b\x32\x17.collaboration.LogEntry\x12\x15\n\rleader_commit\x18\x06 \x01(\x05\"H\n\x12\x41ppendEntriesReply\x12\x0c\n\x04term\x18\x01 \x01(\x05\x12\x0f\n\x07success\x18\x02 \x01(\x08\x12\x13\n\x0bmatch_index\x18\x03 \x01(\x05\x32\xee\x02\n\x14\x43ollaborationService\x12\x42\n\x05Login\x12\x1b.collaboration.LoginRequest\x1a\x1c.collaboration.LoginResponse\x12\x45\n\x06Logout\x12\x1c.collaboration.LogoutRequest\x1a\x1d.collaboration.StatusResponse\x12\x41\n\x04Post\x12\x1a.collaboration.PostRequest\x1a\x1d.collaboration.StatusResponse\x12<\n\x03Get\x12\x19.collaboration.GetRequest\x1a\x1a.collaboration.GetResponse\x12J\n\tSubscribe\x12\x1f.collaboration.SubscribeRequest\x1a\x1a.collaboration.UpdateEvent0\x01\x32S\n\nLLMService\x12\x45\n\x0cGetLLMAnswer\x12\x19.collaboration.LLMRequest\x1a\x1a.collaboration.LLMResponse2\xb3\x01\n\x0bRaftService\x12N\n\x0bRequestVote\x12\x1e.collaboration.RequestVoteArgs\x1a\x1f.collaboration.RequestVoteReply\x12T\n\rAppendEntries\x12 .collaboration.AppendEntriesArgs\x1a!.collaboration.AppendEntriesReplyb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -32,33 +32,33 @@ if _descriptor._USE_C_DESCRIPTORS == False:
   _globals['_POSTREQUEST']._serialized_start=215
   _globals['_POSTREQUEST']._serialized_end=271
   _globals['_GETREQUEST']._serialized_start=273
-  _globals['_GETREQUEST']._serialized_end=330
-  _globals['_DATAITEM']._serialized_start=332
-  _globals['_DATAITEM']._serialized_end=368
-  _globals['_GETRESPONSE']._serialized_start=370
-  _globals['_GETRESPONSE']._serialized_end=439
-  _globals['_LLMREQUEST']._serialized_start=441
-  _globals['_LLMREQUEST']._serialized_end=505
-  _globals['_LLMRESPONSE']._serialized_start=507
-  _globals['_LLMRESPONSE']._serialized_end=556
-  _globals['_SUBSCRIBEREQUEST']._serialized_start=558
-  _globals['_SUBSCRIBEREQUEST']._serialized_end=591
-  _globals['_UPDATEEVENT']._serialized_start=593
-  _globals['_UPDATEEVENT']._serialized_end=667
-  _globals['_REQUESTVOTEARGS']._serialized_start=669
-  _globals['_REQUESTVOTEARGS']._serialized_end=769
-  _globals['_REQUESTVOTEREPLY']._serialized_start=771
-  _globals['_REQUESTVOTEREPLY']._serialized_end=825
-  _globals['_LOGENTRY']._serialized_start=827
-  _globals['_LOGENTRY']._serialized_end=868
-  _globals['_APPENDENTRIESARGS']._serialized_start=871
-  _globals['_APPENDENTRIESARGS']._serialized_end=1035
-  _globals['_APPENDENTRIESREPLY']._serialized_start=1037
-  _globals['_APPENDENTRIESREPLY']._serialized_end=1109
-  _globals['_COLLABORATIONSERVICE']._serialized_start=1112
-  _globals['_COLLABORATIONSERVICE']._serialized_end=1478
-  _globals['_LLMSERVICE']._serialized_start=1480
-  _globals['_LLMSERVICE']._serialized_end=1563
-  _globals['_RAFTSERVICE']._serialized_start=1566
-  _globals['_RAFTSERVICE']._serialized_end=1745
+  _globals['_GETREQUEST']._serialized_end=347
+  _globals['_DATAITEM']._serialized_start=349
+  _globals['_DATAITEM']._serialized_end=385
+  _globals['_GETRESPONSE']._serialized_start=387
+  _globals['_GETRESPONSE']._serialized_end=456
+  _globals['_LLMREQUEST']._serialized_start=458
+  _globals['_LLMREQUEST']._serialized_end=522
+  _globals['_LLMRESPONSE']._serialized_start=524
+  _globals['_LLMRESPONSE']._serialized_end=573
+  _globals['_SUBSCRIBEREQUEST']._serialized_start=575
+  _globals['_SUBSCRIBEREQUEST']._serialized_end=608
+  _globals['_UPDATEEVENT']._serialized_start=610
+  _globals['_UPDATEEVENT']._serialized_end=684
+  _globals['_REQUESTVOTEARGS']._serialized_start=686
+  _globals['_REQUESTVOTEARGS']._serialized_end=786
+  _globals['_REQUESTVOTEREPLY']._serialized_start=788
+  _globals['_REQUESTVOTEREPLY']._serialized_end=842
+  _globals['_LOGENTRY']._serialized_start=844
+  _globals['_LOGENTRY']._serialized_end=885
+  _globals['_APPENDENTRIESARGS']._serialized_start=888
+  _globals['_APPENDENTRIESARGS']._serialized_end=1052
+  _globals['_APPENDENTRIESREPLY']._serialized_start=1054
+  _globals['_APPENDENTRIESREPLY']._serialized_end=1126
+  _globals['_COLLABORATIONSERVICE']._serialized_start=1129
+  _globals['_COLLABORATIONSERVICE']._serialized_end=1495
+  _globals['_LLMSERVICE']._serialized_start=1497
+  _globals['_LLMSERVICE']._serialized_end=1580
+  _globals['_RAFTSERVICE']._serialized_start=1583
+  _globals['_RAFTSERVICE']._serialized_end=1762
 # @@protoc_insertion_point(module_scope)
