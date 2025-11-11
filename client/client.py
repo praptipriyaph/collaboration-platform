@@ -3,6 +3,7 @@ import sys
 import os
 import time
 import threading
+import uuid
 
 # Add project root to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -173,9 +174,12 @@ class CollaborationClient:
 
     def create_document(self, content):
         if not self.token: return
-        request = service_pb2.PostRequest(token=self.token, type="document", data=content)
+        doc_id = str(uuid.uuid4())
+        data = f"{doc_id}|{content}"
+        request = service_pb2.PostRequest(token=self.token, type="document", data=data)
         res = self._execute_rpc("Post", request)
-        if res: print(f"✓ {res.message}")
+        if res:
+            print(f"✓ {res.message} (DocID: {doc_id[:8]}...)")
 
     def update_document(self, doc_id, content):
         if not self.token: return
@@ -242,6 +246,23 @@ class CollaborationClient:
         else:
             print("✗ Failed to fetch document content.")
 
+    def view_document_history(self, doc_id):
+        if not self.token: return
+        req = service_pb2.GetRequest(token=self.token, type="document_history", params=doc_id)
+        res = self._execute_rpc("Get", req)
+
+        if res and res.status == "SUCCESS":
+            print(f"\n=== History for Doc {doc_id[:8]}... ===")
+            if not res.items:
+                print("No history found.")
+                return
+
+            for item in res.items:
+                # item.data already contains the formatted string
+                print(f"- {item.data}")
+        else:
+            print("✗ Failed to retrieve document history.")
+
     def interactive_menu(self):
         while True:
             print("\n" + "=" * 50 + "\nDistributed Collaboration Platform\n" + "=" * 50)
@@ -262,8 +283,9 @@ class CollaborationClient:
                 print("6. Summarize Document (Context aware queries)")
                 print("7. Fix Grammar (Context aware queries)")
                 print("8. Lock/Unlock Document")
-                print("9. Logout")
-                print("10. Exit")
+                print("9. View Document History")
+                print("10. Logout")
+                print("11. Exit")
 
                 choice = input("\nChoice: ")
                 if choice == "1":
@@ -290,9 +312,12 @@ class CollaborationClient:
                     elif action == 'u':
                         self.unlock_document(doc_id)
                 elif choice == "9":
-                    self.logout()
+                    self.view_document_history(input("Enter Document ID: "))
                 elif choice == "10":
+                    self.logout()
+                elif choice == "11":
                     if self.token: self.logout()
+
                     break
 
 

@@ -4,7 +4,7 @@ import sys
 import os
 import threading
 import uuid
-import queue  # NEW: For handling stream queues
+import queue
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -21,34 +21,29 @@ class CollaborationServicer(service_pb2_grpc.CollaborationServiceServicer):
         self.raft_node = raft_node
         self.auth_manager = auth_manager
 
-        # NEW: Manage active subscription queues
         self.subscriber_queues = []
         self.subs_lock = threading.Lock()
 
-        # Register our callback with the Raft node
         self.raft_node.on_apply_callbacks.append(self.on_raft_apply)
 
         print("Application Server initialized")
 
         # Callback triggered by RaftNode when a log entry is committed & applied
     def on_raft_apply(self, op_type, doc_id, user, content):
-            # 1. Create the event object
         event = service_pb2.UpdateEvent(
             type=op_type,
             doc_id=doc_id,
             user=user,
             content=content
             )
-            # 2. Use the helper to broadcast it
         self._broadcast_event(event)
 
-        # HELPER: Broadcasts ANY event to all subscribers internally
     def _broadcast_event(self, event):
         with self.subs_lock:
             for q in self.subscriber_queues:
                 q.put(event)
 
-    # NEW: Implementation of the Subscribe RPC
+    # Subscribe RPC
     def Subscribe(self, request, context):
         print(f"New subscriber connected with token: {request.token[:8]}...")
         valid, username = self.auth_manager.validate_token(request.token)
@@ -56,7 +51,6 @@ class CollaborationServicer(service_pb2_grpc.CollaborationServiceServicer):
             context.abort(grpc.StatusCode.UNAUTHENTICATED, "Invalid token")
             return
 
-        # 1. Notify others that this user joined
         join_event = service_pb2.UpdateEvent(type="JOIN", user=username)
         self._broadcast_event(join_event)
 
@@ -76,26 +70,30 @@ class CollaborationServicer(service_pb2_grpc.CollaborationServiceServicer):
                 if client_queue in self.subscriber_queues:
                     self.subscriber_queues.remove(client_queue)
 
-            # 2. Notify others that this user left
             print(f"Subscriber disconnected: {username}")
             leave_event = service_pb2.UpdateEvent(type="LEAVE", user=username)
             self._broadcast_event(leave_event)
 
     def Login(self, request, context):
-        # --- NEW FIX: Only Leader can issue tokens ---
-        # If we are not the leader, pretend to be unavailable for login.
-        # The smart client will automatically try the next node.
         if self.raft_node.state != "leader":
-             context.abort(grpc.StatusCode.UNAVAILABLE, "Not leader")
-             return service_pb2.LoginResponse()
-        # ---------------------------------------------
+            context.abort(grpc.StatusCode.UNAVAILABLE, "Not leader")
+            return service_pb2.LoginResponse()
 
         print(f"Login attempt: {request.username}")
+        # 1. Authenticate the password (this is not replicated)
         success, token = self.auth_manager.authenticate(request.username, request.password)
+
         if success:
-            self.raft_node.document_manager.add_active_user(request.username)
-            print(f"Login successful: {request.username}")
-            return service_pb2.LoginResponse(status="SUCCESS", token=token)
+            # 2. Submit session creation to the Raft log
+            command_str = f"CREATE_SESSION|{token}|{request.username}"
+            success, _ = self.raft_node.submit_command(command_str)
+
+            if success:
+                print(f"Login successful: {request.username}, token submitted.")
+                return service_pb2.LoginResponse(status="SUCCESS", token=token)
+            else:
+                self.auth_manager.logout(token)  # Clean up local token
+                return service_pb2.LoginResponse(status="FAILURE", token="")
         else:
             print(f"Login failed: {request.username}")
             return service_pb2.LoginResponse(status="FAILURE", token="")
@@ -103,9 +101,11 @@ class CollaborationServicer(service_pb2_grpc.CollaborationServiceServicer):
     def Logout(self, request, context):
         valid, username = self.auth_manager.validate_token(request.token)
         if valid:
-            self.auth_manager.logout(request.token)
-            self.raft_node.document_manager.remove_active_user(username)
-            return service_pb2.StatusResponse(status="SUCCESS", message="Logged out")
+            # 1. Submit session deletion to the Raft log
+            command_str = f"DELETE_SESSION|{request.token}"
+            self.raft_node.submit_command(command_str)
+
+            return service_pb2.StatusResponse(status="SUCCESS", message="Logged out request submitted")
         else:
             return service_pb2.StatusResponse(status="FAILURE", message="Invalid token")
 
@@ -117,25 +117,25 @@ class CollaborationServicer(service_pb2_grpc.CollaborationServiceServicer):
 
         command_str = None
         if request.type == "document":
-            doc_id = str(uuid.uuid4())
-            command_str = f"CREATE|{doc_id}|{username}|{request.data}"
-
+            parts = request.data.split("|", 1)
+            if len(parts) == 2:
+                doc_id, content = parts
+                command_str = f"CREATE|{doc_id}|{username}|{content}"
+            else:
+                return service_pb2.StatusResponse(status="FAILURE", message="Invalid document data format")
         elif request.type == "update":
             parts = request.data.split("|", 1)
             if len(parts) == 2:
                 doc_id, content = parts
                 command_str = f"UPDATE|{doc_id}|{content}|{username}"
 
-        # --- NEW REQUEST TYPES ---
         elif request.type == "lock":
-            # request.data should be the doc_id
             doc_id = request.data
             command_str = f"LOCK|{doc_id}|{username}"
 
         elif request.type == "unlock":
             doc_id = request.data
             command_str = f"UNLOCK|{doc_id}|{username}"
-        # -------------------------
 
         if not command_str:
             return service_pb2.StatusResponse(status="FAILURE", message="Invalid request")
@@ -154,12 +154,10 @@ class CollaborationServicer(service_pb2_grpc.CollaborationServiceServicer):
 
         doc_manager = self.raft_node.document_manager
 
-        # --- NEW: Fetch single document content for the client ---
         if request.type == "document_content":
              doc_id = request.params
              doc = doc_manager.get_document(doc_id)
              if doc:
-                 # Return just the content
                  return service_pb2.GetResponse(status="SUCCESS", items=[service_pb2.DataItem(id=doc_id, data=doc["content"])])
              else:
                  return service_pb2.GetResponse(status="FAILURE", items=[service_pb2.DataItem(id="error", data="Document not found")])
@@ -169,7 +167,7 @@ class CollaborationServicer(service_pb2_grpc.CollaborationServiceServicer):
             items = [
                 service_pb2.DataItem(
                     id=doc["id"],
-                    data=f"{doc['content']} | Author: {doc['author']} | Version: {doc['version']}"
+                    data=doc["display_data"]
                 ) for doc in docs
             ]
             return service_pb2.GetResponse(status="SUCCESS", items=items)
@@ -181,7 +179,6 @@ class CollaborationServicer(service_pb2_grpc.CollaborationServiceServicer):
 
         elif request.type == "llm_query":
             try:
-                # Use the context sent by the client, or default to generic if missing
                 llm_context = request.context if request.context else "General collaboration system query."
 
                 llm_response = self.llm_stub.GetLLMAnswer(
@@ -196,18 +193,26 @@ class CollaborationServicer(service_pb2_grpc.CollaborationServiceServicer):
             except Exception as e:
                 return service_pb2.GetResponse(status="FAILURE", items=[service_pb2.DataItem(id="error", data=str(e))])
 
+        elif request.type == "document_history":
+            doc_id = request.params
+            history = doc_manager.get_document_history(doc_id)
+            items = []
+            for i, version_data in enumerate(history):
+                items.append(service_pb2.DataItem(
+                    id=str(i + 1),  # Version number
+                    data=f"V{i + 1} ({version_data['timestamp']}) by {version_data['author']}: {version_data['content']}"
+                ))
+            return service_pb2.GetResponse(status="SUCCESS", items=items)
+
         return service_pb2.GetResponse(status="FAILURE", items=[])
 
 def serve(node_id, peer_ids):
-    # (Same as before, just ensure max_workers is high enough for many subscribers)
     llm_channel = grpc.insecure_channel('localhost:50052')
     llm_stub = service_pb2_grpc.LLMServiceStub(llm_channel)
     doc_manager = DocumentManager()
     auth_manager = AuthManager()
-    raft_node = RaftNode(node_id, peer_ids, doc_manager)
+    raft_node = RaftNode(node_id, peer_ids, doc_manager, auth_manager)
     collab_servicer = CollaborationServicer(llm_stub, raft_node, auth_manager)
-
-    # Increased max_workers to handle blocking Subscribe calls
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=50))
     service_pb2_grpc.add_CollaborationServiceServicer_to_server(collab_servicer, server)
     service_pb2_grpc.add_RaftServiceServicer_to_server(raft_node, server)

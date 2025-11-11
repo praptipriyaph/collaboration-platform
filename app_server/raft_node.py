@@ -7,10 +7,8 @@ import os
 import service_pb2
 import service_pb2_grpc
 from app_server.document_manager import DocumentManager
-# We will use this to run all our outgoing RPCs
 from concurrent.futures import ThreadPoolExecutor
 
-# --- Constants ---
 ELECTION_TIMEOUT_MIN = 3.0  # seconds
 ELECTION_TIMEOUT_MAX = 5.0  # seconds
 HEARTBEAT_INTERVAL = 1.0  # seconds
@@ -23,46 +21,35 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
     Includes disk persistence for reliable recovery.
     """
 
-    def __init__(self, node_id, peer_ids, document_manager):
+    def __init__(self, node_id, peer_ids, document_manager, auth_manager):
         self.node_id = node_id
         self.peer_ids = peer_ids
         self.document_manager = document_manager
+        self.auth_manager = auth_manager
 
-        # --- Persistent State Storage File ---
-        # Creates a unique filename like 'raft_state_localhost_50053.json'
         self.storage_file = f"raft_state_{node_id.replace(':', '_')}.json"
 
-        # --- Persistent Raft State ---
         self.current_term = 0
         self.voted_for = None
         self.log = []
 
         # LOAD STATE FROM DISK IF EXISTS
-        # This must be called BEFORE volatile state is set up
         self._load_state()
-
-        # --- Volatile Raft State ---
         self.commit_index = -1
         self.last_applied = -1
         self.state = "follower"
         self.leader_id = None
 
-        # --- Leader-Specific State ---
         self.next_index = {peer: 0 for peer in self.peer_ids}
         self.match_index = {peer: -1 for peer in self.peer_ids}
 
-        # --- gRPC Stubs for Peers ---
         self.peer_stubs = {}
         for peer in self.peer_ids:
             channel = grpc.insecure_channel(peer)
             self.peer_stubs[peer] = service_pb2_grpc.RaftServiceStub(channel)
 
-        # --- RPC Thread Pool ---
-        # Create one, long-lived thread pool for all outgoing RPCs.
-        # The number of workers should be proportional to peers.
         self.rpc_executor = ThreadPoolExecutor(max_workers=len(self.peer_ids) * 2 + 1)
 
-        # --- Timers and Locks ---
         self.lock = threading.Lock()
         self.election_timeout = self._get_new_election_timeout()
         self.last_heartbeat = time.time()
@@ -71,13 +58,7 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
 
         print(f"[{self.node_id}] Initialized as Follower in Term {self.current_term}")
 
-    # -------------------------------------------------
-    # Persistence Helpers
-    # -------------------------------------------------
-
     def _save_state(self):
-        """Saves current_term, voted_for, and log to disk."""
-        # Convert generic LogEntry protobufs to simple dicts for JSON serialization
         log_data = [{'term': e.term, 'command': e.command} for e in self.log]
         state = {
             'current_term': self.current_term,
@@ -91,14 +72,12 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
             print(f"[{self.node_id}] ⚠️ Failed to save state: {e}")
 
     def _load_state(self):
-        """Loads state from disk on startup."""
         if os.path.exists(self.storage_file):
             try:
                 with open(self.storage_file, 'r') as f:
                     state = json.load(f)
                     self.current_term = state.get('current_term', 0)
                     self.voted_for = state.get('voted_for')
-                    # Reconstruct protobuf objects from loaded dicts
                     self.log = []
                     for entry_data in state.get('log', []):
                         self.log.append(service_pb2.LogEntry(
@@ -111,10 +90,6 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
         else:
             print(f"[{self.node_id}] No persistent state found. Starting fresh.")
 
-    # -------------------------------------------------
-    # Raft Core Logic
-    # -------------------------------------------------
-
     def _get_new_election_timeout(self):
         return random.uniform(ELECTION_TIMEOUT_MIN, ELECTION_TIMEOUT_MAX)
 
@@ -126,7 +101,6 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
         return last_index, last_term
 
     def run(self):
-        """Main loop that drives the node's state."""
         while True:
             with self.lock:
                 current_state = self.state
@@ -147,7 +121,6 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
                 self.state = "candidate"
 
     def _run_candidate(self):
-        # --- 1. Setup Election ---
         with self.lock:
             self.current_term += 1
             self.voted_for = self.node_id
@@ -168,10 +141,8 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
             last_log_term=last_log_term
         )
 
-        # --- 2. Send RPCs in Parallel ---
         futures = {self.rpc_executor.submit(self._request_vote_from_peer, peer, args): peer for peer in self.peer_ids}
 
-        # --- 3. Tally Votes ---
         with self.lock:
             if self.state != "candidate" or self.current_term != election_term:
                 return
@@ -186,7 +157,6 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
                         self._step_down(reply.term)
                         return
 
-            # --- 4. Decide Election Outcome ---
             if votes_received > (len(self.peer_ids) + 1) / 2:
                 print(f"[{self.node_id}] Won election for Term {election_term} with {votes_received} votes.")
                 self.state = "leader"
@@ -264,7 +234,6 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
             return None
 
     def _update_commit_index(self):
-        """MUST be called *while holding self.lock*."""
         if self.state != "leader":
             return
 
@@ -280,7 +249,6 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
                     break
 
     def _apply_log_entries(self):
-        """MUST be called *while holding self.lock*."""
         while self.commit_index > self.last_applied:
             self.last_applied += 1
             entry = self.log[self.last_applied]
@@ -312,6 +280,20 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
                     if self.document_manager.release_lock(doc_id, username):
                         self._notify_listeners("UNLOCK", doc_id, username, "")
 
+                elif cmd_type == "CREATE_SESSION":
+                    token, username = parts[1], parts[2]
+                    if self.auth_manager.apply_create_session(token, username):
+                        self.document_manager.add_active_user(username)
+                        print(f"[{self.node_id}] Applied CREATE_SESSION for {username}")
+
+                elif cmd_type == "DELETE_SESSION":
+                    token = parts[1]
+                    valid, username = self.auth_manager.validate_token(token)
+                    if valid:
+                        if self.auth_manager.apply_delete_session(token):
+                            self.document_manager.remove_active_user(username)
+                            print(f"[{self.node_id}] Applied DELETE_SESSION for {username}")
+
             except Exception as e:
                 print(f"[{self.node_id}] Error applying log: {e}")
 
@@ -333,10 +315,6 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
             self._save_state()  # PERSIST STATE
 
         self.last_heartbeat = time.time()
-
-    # -------------------------------------------------
-    # gRPC Servicer Methods (Called by peers)
-    # -------------------------------------------------
 
     def RequestVote(self, request, context):
         with self.lock:
@@ -389,10 +367,6 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
                 success=success,
                 match_index=len(self.log) - 1
             )
-
-    # -------------------------------------------------
-    # Client-Facing Method
-    # -------------------------------------------------
 
     def submit_command(self, command_str):
         with self.lock:

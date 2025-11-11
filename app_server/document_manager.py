@@ -1,39 +1,49 @@
 from datetime import datetime
 import uuid
 
-
 class DocumentManager:
     def __init__(self):
         self.documents = {}
         self.active_users = set()
-        # NEW: Store locks (doc_id -> username)
         self.locks = {}
 
     def create_document(self, doc_id, username, content):
-        # doc_id is now passed in from the leader
         self.documents[doc_id] = {
             "id": doc_id,
-            "content": content,
             "author": username,
             "created": datetime.now().isoformat(),
-            "modified": datetime.now().isoformat(),
-            "version": 1
+            "version": 1,
+            "content_history": [{
+                "content": content,
+                "timestamp": datetime.now().isoformat(),
+                "author": username
+            }]
         }
         return doc_id
 
     def get_document(self, doc_id):
         doc = self.documents.get(doc_id)
         if doc:
-            # Add lock info to the document data for clients to see
-            doc["locked_by"] = self.locks.get(doc_id)
-        return doc
+            # Create a copy to avoid modifying the original
+            doc_copy = doc.copy()
+            doc_copy["locked_by"] = self.locks.get(doc_id)
+            # Inject the *latest* content into the top level for compatibility
+            if doc_copy.get("content_history"):
+                doc_copy["content"] = doc_copy["content_history"][-1]["content"]
+            return doc_copy
+        return None
 
     def get_all_documents(self):
-        # Add lock info to all documents
         docs = []
         for doc_id, doc in self.documents.items():
             doc_copy = doc.copy()
             doc_copy["locked_by"] = self.locks.get(doc_id)
+
+            latest_content = ""
+            if doc_copy.get("content_history"):
+                latest_content = doc_copy["content_history"][-1]["content"]
+
+            doc_copy["display_data"] = f"{latest_content} | Author: {doc['author']} | Version: {doc['version']}"
             docs.append(doc_copy)
         return docs
 
@@ -48,22 +58,25 @@ class DocumentManager:
                 f"⚠️ DEBUG: Update failed. Doc is locked by '{self.locks[doc_id]}', but '{username}' tried to update it.")
             return False
 
-        self.documents[doc_id]["content"] = content
-        self.documents[doc_id]["modified"] = datetime.now().isoformat()
+        new_version_data = {
+            "content": content,
+            "timestamp": datetime.now().isoformat(),
+            "author": username
+        }
+        self.documents[doc_id]["content_history"].append(new_version_data)
         self.documents[doc_id]["version"] += 1
-        print(f"✅ DEBUG: Document {doc_id} successfully updated by {username}.")
+
+        print(f"✅ DEBUG: Document {doc_id} successfully updated to v{self.documents[doc_id]['version']}.")
         return True
 
     def delete_document(self, doc_id):
         if doc_id in self.documents:
             del self.documents[doc_id]
-            # Also remove any lock
             if doc_id in self.locks:
                 del self.locks[doc_id]
             return True
         return False
 
-    # --- NEW: Locking Methods ---
     def acquire_lock(self, doc_id, username):
         if doc_id not in self.documents:
             print(f"⚠️ DEBUG: Lock failed. Document {doc_id} not found.")
@@ -91,3 +104,8 @@ class DocumentManager:
 
     def get_active_users(self):
         return list(self.active_users)
+
+    def get_document_history(self, doc_id):
+
+        doc = self.documents.get(doc_id)
+        return doc.get("content_history", []) if doc else []

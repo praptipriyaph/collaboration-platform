@@ -40,3 +40,18 @@ class AuthManager:
             del self.sessions[token]
             return True
         return False
+
+    def apply_create_session(self, token, username):
+        if token not in self.sessions:
+            self.sessions[token] = {
+                "username": username,
+                "created": datetime.now()
+            }
+            return True
+        return False
+
+    def apply_delete_session(self, token):
+        if token in self.sessions:
+            del self.sessions[token]
+            return True
+        return False
