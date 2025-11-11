@@ -22,3 +22,4 @@ env/
 models/*.gguf
 
 raft_state_localhost_*.json
+raft_snapshot_localhost_*.json

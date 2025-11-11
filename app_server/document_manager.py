@@ -109,3 +109,16 @@ class DocumentManager:
 
         doc = self.documents.get(doc_id)
         return doc.get("content_history", []) if doc else []
+
+    def get_state(self):
+        return {
+            'documents': self.documents,
+            'active_users': list(self.active_users),
+            'locks': self.locks
+        }
+
+    def load_state(self, state):
+        self.documents = state.get('documents', {})
+        self.active_users = set(state.get('active_users', []))
+        self.locks = state.get('locks', {})
+        print("✅ DEBUG: DocumentManager state loaded from snapshot.")

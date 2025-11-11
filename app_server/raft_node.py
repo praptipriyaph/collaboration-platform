@@ -7,18 +7,20 @@ import os
 import service_pb2
 import service_pb2_grpc
 from app_server.document_manager import DocumentManager
+from app_server.auth import AuthManager
 from concurrent.futures import ThreadPoolExecutor
 
-ELECTION_TIMEOUT_MIN = 3.0  # seconds
-ELECTION_TIMEOUT_MAX = 5.0  # seconds
-HEARTBEAT_INTERVAL = 1.0  # seconds
-RPC_TIMEOUT = 0.5  # 500ms for RPCs
+# --- Constants ---
+ELECTION_TIMEOUT_MIN = 3.0
+ELECTION_TIMEOUT_MAX = 5.0
+HEARTBEAT_INTERVAL = 1.0
+RPC_TIMEOUT = 0.5
+SNAPSHOT_THRESHOLD = 50
 
 
 class RaftNode(service_pb2_grpc.RaftServiceServicer):
     """
-    Implements the Raft consensus logic and the RaftService gRPC servicer.
-    Includes disk persistence for reliable recovery.
+    Implements Raft with log compaction via snapshotting.
     """
 
     def __init__(self, node_id, peer_ids, document_manager, auth_manager):
@@ -27,84 +29,194 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
         self.document_manager = document_manager
         self.auth_manager = auth_manager
 
-        self.storage_file = f"raft_state_{node_id.replace(':', '_')}.json"
+        # --- File Paths ---
+        self.state_file = f"raft_state_{node_id.replace(':', '_')}.json"
+        self.snapshot_file = f"raft_snapshot_{node_id.replace(':', '_')}.json"
 
+        # --- Persistent Raft State (must be saved) ---
         self.current_term = 0
         self.voted_for = None
-        self.log = []
+        self.log = []  # This log now *only* contains entries AFTER the last snapshot
 
-        # LOAD STATE FROM DISK IF EXISTS
-        self._load_state()
+        # --- New Snapshot State (must be saved) ---
+        self.last_snapshot_index = -1
+        self.last_snapshot_term = 0
+
+        # --- Volatile Raft State ---
         self.commit_index = -1
         self.last_applied = -1
         self.state = "follower"
         self.leader_id = None
 
+        # --- Leader-Specific State ---
         self.next_index = {peer: 0 for peer in self.peer_ids}
         self.match_index = {peer: -1 for peer in self.peer_ids}
 
+        # --- gRPC Stubs & Executor ---
         self.peer_stubs = {}
         for peer in self.peer_ids:
             channel = grpc.insecure_channel(peer)
             self.peer_stubs[peer] = service_pb2_grpc.RaftServiceStub(channel)
-
         self.rpc_executor = ThreadPoolExecutor(max_workers=len(self.peer_ids) * 2 + 1)
 
+        # --- Timers and Locks ---
         self.lock = threading.Lock()
+
+        # --- Initialization ---
+        self._load_state()  # Load term, vote, last snapshot index
+        self._load_snapshot_from_disk()  # Apply snapshot to state machines
+        self._apply_log_entries()  # Apply any remaining log entries
+
         self.election_timeout = self._get_new_election_timeout()
         self.last_heartbeat = time.time()
-
         self.on_apply_callbacks = []
 
         print(f"[{self.node_id}] Initialized as Follower in Term {self.current_term}")
 
+    # -------------------------------------------------
+    # Indexing Helper Methods (Crucial for Snapshotting)
+    # -------------------------------------------------
+
+    def _get_list_index(self, absolute_index):
+        """Converts an absolute log index to an index in self.log list."""
+        return absolute_index - (self.last_snapshot_index + 1)
+
+    def _get_absolute_index(self, list_index):
+        """Converts a self.log list index to an absolute log index."""
+        return self.last_snapshot_index + 1 + list_index
+
+    def _get_log_term(self, absolute_index):
+        """Gets the term of an entry at an absolute index."""
+        if absolute_index == self.last_snapshot_index:
+            return self.last_snapshot_term
+        if absolute_index < self.last_snapshot_index:
+            return -1  # Error, entry is snapshotted
+
+        list_index = self._get_list_index(absolute_index)
+        if list_index < 0 or list_index >= len(self.log):
+            return -1  # Error, index out of bounds
+
+        return self.log[list_index].term
+
+    def _get_last_log_index_term(self):
+        """Gets the (absolute_index, term) of the very last log entry."""
+        if not self.log:
+            return self.last_snapshot_index, self.last_snapshot_term
+
+        absolute_index = self._get_absolute_index(len(self.log) - 1)
+        term = self.log[-1].term
+        return absolute_index, term
+
+    # -------------------------------------------------
+    # Persistence & Snapshotting Methods
+    # -------------------------------------------------
+
     def _save_state(self):
+        """Saves current_term, voted_for, log, and snapshot indices to disk."""
         log_data = [{'term': e.term, 'command': e.command} for e in self.log]
         state = {
             'current_term': self.current_term,
             'voted_for': self.voted_for,
-            'log': log_data
+            'log': log_data,
+            'last_snapshot_index': self.last_snapshot_index,
+            'last_snapshot_term': self.last_snapshot_term
         }
         try:
-            with open(self.storage_file, 'w') as f:
+            with open(self.state_file, 'w') as f:
                 json.dump(state, f)
         except Exception as e:
             print(f"[{self.node_id}] ⚠️ Failed to save state: {e}")
 
     def _load_state(self):
-        if os.path.exists(self.storage_file):
+        """Loads state from disk on startup."""
+        if os.path.exists(self.state_file):
             try:
-                with open(self.storage_file, 'r') as f:
+                with open(self.state_file, 'r') as f:
                     state = json.load(f)
                     self.current_term = state.get('current_term', 0)
                     self.voted_for = state.get('voted_for')
+                    self.last_snapshot_index = state.get('last_snapshot_index', -1)
+                    self.last_snapshot_term = state.get('last_snapshot_term', 0)
+
+                    self.commit_index = self.last_snapshot_index
+                    self.last_applied = self.last_snapshot_index
+
                     self.log = []
                     for entry_data in state.get('log', []):
                         self.log.append(service_pb2.LogEntry(
                             term=entry_data['term'],
                             command=entry_data['command']
                         ))
-                print(f"[{self.node_id}] 💾 Loaded persisted state: Term {self.current_term}, Log size {len(self.log)}")
+                print(
+                    f"[{self.node_id}] 💾 Loaded persisted state: Term {self.current_term}, Log size {len(self.log)}, Snapshot Index {self.last_snapshot_index}")
             except Exception as e:
                 print(f"[{self.node_id}] ⚠️ Failed to load state: {e}")
         else:
             print(f"[{self.node_id}] No persistent state found. Starting fresh.")
 
+    def _create_snapshot(self):
+        """Saves the state machine and compacts the log."""
+        # This function MUST be called while holding self.lock
+
+        # 1. Get the state from state machines
+        doc_state = self.document_manager.get_state()
+        auth_state = self.auth_manager.get_state()
+
+        # 2. Get index and term of entry we are snapshotting up to
+        snapshot_index = self.last_applied
+        snapshot_term = self._get_log_term(snapshot_index)
+
+        print(f"[{self.node_id}] 📸 Creating snapshot up to index {snapshot_index} (Term {snapshot_term})")
+
+        snapshot_data = {
+            'doc_manager': doc_state,
+            'auth_manager': auth_state
+        }
+
+        # 3. Save snapshot to disk
+        try:
+            with open(self.snapshot_file, 'w') as f:
+                json.dump(snapshot_data, f)
+        except Exception as e:
+            print(f"[{self.node_id}] ⚠️ Failed to save snapshot: {e}")
+            return  # Abort on failure
+
+        # 4. Update snapshot indices
+        self.last_snapshot_index = snapshot_index
+        self.last_snapshot_term = snapshot_term
+
+        # 5. Compact the log
+        list_index_to_compact = self._get_list_index(snapshot_index)
+        self.log = self.log[list_index_to_compact + 1:]
+
+        # 6. Save the new (compacted) state
+        self._save_state()
+
+    def _load_snapshot_from_disk(self):
+        """Loads the state machine state from the snapshot file."""
+        if os.path.exists(self.snapshot_file):
+            try:
+                with open(self.snapshot_file, 'r') as f:
+                    snapshot_data = json.load(f)
+                    self.document_manager.load_state(snapshot_data['doc_manager'])
+                    self.auth_manager.load_state(snapshot_data['auth_manager'])
+                print(f"[{self.node_id}] 💾 Loaded state from snapshot file.")
+            except Exception as e:
+                print(f"[{self.node_id}] ⚠️ Failed to load snapshot: {e}")
+
+    # -------------------------------------------------
+    # Raft Core Logic (Modified for Snapshotting)
+    # -------------------------------------------------
+
     def _get_new_election_timeout(self):
         return random.uniform(ELECTION_TIMEOUT_MIN, ELECTION_TIMEOUT_MAX)
 
-    def _get_last_log_index_term(self):
-        if not self.log:
-            return -1, 0
-        last_index = len(self.log) - 1
-        last_term = self.log[last_index].term
-        return last_index, last_term
-
     def run(self):
+        """Main loop that drives the node's state."""
         while True:
             with self.lock:
                 current_state = self.state
-
+            # ... (rest is unchanged)
             if current_state == "follower":
                 self._run_follower()
             elif current_state == "candidate":
@@ -112,7 +224,7 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
             elif current_state == "leader":
                 self._run_leader()
 
-            time.sleep(0.1)  # 100ms tick
+            time.sleep(0.1)
 
     def _run_follower(self):
         if time.time() - self.last_heartbeat > self.election_timeout:
@@ -124,7 +236,7 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
         with self.lock:
             self.current_term += 1
             self.voted_for = self.node_id
-            self._save_state()  # PERSIST STATE
+            self._save_state()
             votes_received = 1
             print(f"[{self.node_id}] Starting election for Term {self.current_term}")
 
@@ -144,6 +256,7 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
         futures = {self.rpc_executor.submit(self._request_vote_from_peer, peer, args): peer for peer in self.peer_ids}
 
         with self.lock:
+            # ... (tallying votes, same as before)
             if self.state != "candidate" or self.current_term != election_term:
                 return
 
@@ -152,7 +265,6 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
                 if reply:
                     if reply.vote_granted:
                         votes_received += 1
-
                     if reply.term > self.current_term:
                         self._step_down(reply.term)
                         return
@@ -184,15 +296,16 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
             self.last_heartbeat = time.time()
             if self.state != "leader":
                 return
+
+            # Use self.rpc_executor to send RPCs in parallel
             futures = {self.rpc_executor.submit(self._replicate_log_to_peer, peer): peer for peer in self.peer_ids}
 
         for future in futures:
-            reply = future.result()
-            if reply:
+            reply_term = future.result()
+            if reply_term and reply_term > self.current_term:
                 with self.lock:
-                    if reply.term > self.current_term:
-                        self._step_down(reply.term)
-                        return
+                    self._step_down(reply_term)
+                    return
 
         with self.lock:
             if self.state == "leader":
@@ -200,13 +313,25 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
                 self._apply_log_entries()
 
     def _replicate_log_to_peer(self, peer):
+        """Decides whether to send AppendEntries or InstallSnapshot."""
         with self.lock:
             if self.state != "leader":
                 return None
 
-            prev_log_index = self.next_index[peer] - 1
-            prev_log_term = self.log[prev_log_index].term if prev_log_index >= 0 else 0
-            entries_to_send = self.log[self.next_index[peer]:]
+            peer_next_index = self.next_index[peer]
+
+            # If follower is too far behind, send a snapshot
+            if peer_next_index <= self.last_snapshot_index:
+                print(
+                    f"[{self.node_id}] Follower {peer} too far behind (next_index={peer_next_index}, snapshot_index={self.last_snapshot_index}). Sending snapshot.")
+                return self.rpc_executor.submit(self._send_snapshot_to_peer, peer).result()
+
+            # --- Send AppendEntries as normal ---
+            prev_log_index = peer_next_index - 1
+            prev_log_term = self._get_log_term(prev_log_index)
+
+            list_start_index = self._get_list_index(peer_next_index)
+            entries_to_send = self.log[list_start_index:]
 
             args = service_pb2.AppendEntriesArgs(
                 term=self.current_term,
@@ -222,23 +347,64 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
 
             with self.lock:
                 if self.state != "leader" or reply.term > self.current_term:
-                    return reply
+                    return reply.term
 
                 if reply.success:
-                    self.next_index[peer] = len(self.log)
-                    self.match_index[peer] = len(self.log) - 1
+                    new_match_index = prev_log_index + len(entries_to_send)
+                    self.match_index[peer] = new_match_index
+                    self.next_index[peer] = new_match_index + 1
                 else:
+                    # Follower failed, decrement next_index
                     self.next_index[peer] = max(0, self.next_index[peer] - 1)
-            return reply
+            return reply.term
         except grpc.RpcError:
             return None
 
+    def _send_snapshot_to_peer(self, peer):
+        """Reads snapshot and sends InstallSnapshot RPC."""
+        # This function MUST be called while holding self.lock
+
+        try:
+            with open(self.snapshot_file, 'rb') as f:
+                snapshot_bytes = f.read()
+        except Exception as e:
+            print(f"[{self.node_id}] ⚠️ Failed to read snapshot for {peer}: {e}")
+            return self.current_term
+
+        args = service_pb2.InstallSnapshotArgs(
+            term=self.current_term,
+            leader_id=self.node_id,
+            last_snapshot_index=self.last_snapshot_index,
+            last_snapshot_term=self.last_snapshot_term,
+            snapshot_data=snapshot_bytes
+        )
+
+        try:
+            # This RPC might take longer, so we don't use the short RPC_TIMEOUT
+            reply = self.peer_stubs[peer].InstallSnapshot(args, timeout=5.0)
+
+            if reply.term > self.current_term:
+                return reply.term  # Will be handled by caller
+
+            if reply.success:
+                print(f"[{self.node_id}] Successfully installed snapshot on {peer}")
+                self.match_index[peer] = self.last_snapshot_index
+                self.next_index[peer] = self.last_snapshot_index + 1
+
+            return reply.term
+        except grpc.RpcError as e:
+            print(f"[{self.node_id}] ⚠️ InstallSnapshot RPC to {peer} failed: {e}")
+            return self.current_term
+
     def _update_commit_index(self):
+        """MUST be called *while holding self.lock*."""
         if self.state != "leader":
             return
 
-        for N in range(len(self.log) - 1, self.commit_index, -1):
-            if self.log[N].term == self.current_term:
+        last_log_index, _ = self._get_last_log_index_term()
+
+        for N in range(last_log_index, self.commit_index, -1):
+            if self._get_log_term(N) == self.current_term:
                 majority_count = 1
                 for peer in self.peer_ids:
                     if self.match_index[peer] >= N:
@@ -249,43 +415,43 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
                     break
 
     def _apply_log_entries(self):
+        """MUST be called *while holding self.lock*."""
+
         while self.commit_index > self.last_applied:
             self.last_applied += 1
-            entry = self.log[self.last_applied]
 
-            print(f"[{self.node_id}] Applying to state machine: {entry.command}")
+            # Get the entry from the in-memory log
+            list_index = self._get_list_index(self.last_applied)
+            entry = self.log[list_index]
+
+            print(f"[{self.node_id}] Applying to state machine (Index {self.last_applied}): {entry.command}")
 
             try:
+                # ... (This logic is identical to before)
                 parts = entry.command.split('|')
                 cmd_type = parts[0]
-
                 if cmd_type == "CREATE":
                     doc_id, username, content = parts[1], parts[2], parts[3]
                     self.document_manager.create_document(doc_id, username, content)
                     self._notify_listeners("CREATE", doc_id, username, content)
-
                 elif cmd_type == "UPDATE":
                     doc_id, content, username = parts[1], parts[2], parts[3]
                     success = self.document_manager.update_document(doc_id, content, username)
                     if success:
                         self._notify_listeners("UPDATE", doc_id, username, content)
-
                 elif cmd_type == "LOCK":
                     doc_id, username = parts[1], parts[2]
                     if self.document_manager.acquire_lock(doc_id, username):
                         self._notify_listeners("LOCK", doc_id, username, "")
-
                 elif cmd_type == "UNLOCK":
                     doc_id, username = parts[1], parts[2]
                     if self.document_manager.release_lock(doc_id, username):
                         self._notify_listeners("UNLOCK", doc_id, username, "")
-
                 elif cmd_type == "CREATE_SESSION":
                     token, username = parts[1], parts[2]
                     if self.auth_manager.apply_create_session(token, username):
                         self.document_manager.add_active_user(username)
                         print(f"[{self.node_id}] Applied CREATE_SESSION for {username}")
-
                 elif cmd_type == "DELETE_SESSION":
                     token = parts[1]
                     valid, username = self.auth_manager.validate_token(token)
@@ -293,9 +459,12 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
                         if self.auth_manager.apply_delete_session(token):
                             self.document_manager.remove_active_user(username)
                             print(f"[{self.node_id}] Applied DELETE_SESSION for {username}")
-
             except Exception as e:
                 print(f"[{self.node_id}] Error applying log: {e}")
+
+        # --- TRIGGER SNAPSHOTTING ---
+        if self.last_applied - self.last_snapshot_index > SNAPSHOT_THRESHOLD:
+            self._create_snapshot()
 
     def _notify_listeners(self, op_type, doc_id, user, content):
         for callback in self.on_apply_callbacks:
@@ -312,9 +481,13 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
             self.state = "follower"
             self.voted_for = None
             self.leader_id = None
-            self._save_state()  # PERSIST STATE
+            self._save_state()
 
         self.last_heartbeat = time.time()
+
+    # -------------------------------------------------
+    # gRPC Servicer Methods (Called by peers)
+    # -------------------------------------------------
 
     def RequestVote(self, request, context):
         with self.lock:
@@ -330,7 +503,7 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
                         (request.last_log_term == last_log_term and request.last_log_index >= last_log_index):
                     vote_granted = True
                     self.voted_for = request.candidate_id
-                    self._save_state()  # PERSIST STATE
+                    self._save_state()
                     self.last_heartbeat = time.time()
 
             return service_pb2.RequestVoteReply(
@@ -344,43 +517,104 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
                 self._step_down(request.term)
 
             success = False
+            match_index = -1
+
             if request.term == self.current_term:
                 self.state = "follower"
                 self.leader_id = request.leader_id
                 self.last_heartbeat = time.time()
 
-                if request.prev_log_index == -1 or \
-                        (request.prev_log_index < len(self.log) and \
-                         self.log[request.prev_log_index].term == request.prev_log_term):
+                # Check if log contains prev_log_index
+                last_log_index, _ = self._get_last_log_index_term()
+                if request.prev_log_index > last_log_index:
+                    return service_pb2.AppendEntriesReply(term=self.current_term, success=False,
+                                                          match_index=last_log_index)
 
-                    success = True
-                    self.log = self.log[:request.prev_log_index + 1]
-                    self.log.extend(request.entries)
-                    self._save_state()  # PERSIST STATE
+                # Check if terms match
+                if self._get_log_term(request.prev_log_index) != request.prev_log_term:
+                    return service_pb2.AppendEntriesReply(term=self.current_term, success=False,
+                                                          match_index=last_log_index)
 
-                    if request.leader_commit > self.commit_index:
-                        self.commit_index = min(request.leader_commit, len(self.log) - 1)
-                        self._apply_log_entries()
+                success = True
+
+                # Find where to truncate
+                list_truncate_index = self._get_list_index(request.prev_log_index + 1)
+                self.log = self.log[:list_truncate_index]
+
+                # Append new entries
+                self.log.extend(request.entries)
+                self._save_state()
+
+                match_index, _ = self._get_last_log_index_term()
+
+                if request.leader_commit > self.commit_index:
+                    self.commit_index = min(request.leader_commit, match_index)
+                    self._apply_log_entries()
 
             return service_pb2.AppendEntriesReply(
                 term=self.current_term,
                 success=success,
-                match_index=len(self.log) - 1
+                match_index=match_index
             )
+
+    def InstallSnapshot(self, request, context):
+        with self.lock:
+            if request.term > self.current_term:
+                self._step_down(request.term)
+
+            if request.term < self.current_term:
+                return service_pb2.InstallSnapshotReply(term=self.current_term, success=False)
+
+            print(f"[{self.node_id}] 📸 Received snapshot from leader {request.leader_id}")
+
+            # 1. Save snapshot bytes to file
+            try:
+                with open(self.snapshot_file, 'wb') as f:
+                    f.write(request.snapshot_data)
+            except Exception as e:
+                print(f"[{self.node_id}] ⚠️ Failed to write snapshot to disk: {e}")
+                return service_pb2.InstallSnapshotReply(term=self.current_term, success=False)
+
+            # 2. Load snapshot into state machines
+            self._load_snapshot_from_disk()
+
+            # 3. Update persistent state
+            self.last_snapshot_index = request.last_snapshot_index
+            self.last_snapshot_term = request.last_snapshot_term
+
+            # 4. Update volatile state
+            self.last_applied = max(self.last_applied, self.last_snapshot_index)
+            self.commit_index = max(self.commit_index, self.last_snapshot_index)
+
+            # 5. Handle log truncation
+            # If our log has entries newer than the snapshot, keep them
+            new_log = []
+            for i, entry in enumerate(self.log):
+                if self._get_absolute_index(i) > self.last_snapshot_index and \
+                        self.log[i].term > self.last_snapshot_term:
+                    new_log.append(entry)
+            self.log = new_log
+
+            self._save_state()
+
+            return service_pb2.InstallSnapshotReply(term=self.current_term, success=True)
+
+    # -------------------------------------------------
+    # Client-Facing Method
+    # -------------------------------------------------
 
     def submit_command(self, command_str):
         with self.lock:
             if self.state != "leader":
                 return False, self.leader_id
 
+            last_log_index, _ = self._get_last_log_index_term()
             log_entry = service_pb2.LogEntry(
                 term=self.current_term,
                 command=command_str
             )
             self.log.append(log_entry)
-            self._save_state()  # PERSIST STATE
-            print(f"[{self.node_id}] Leader received command: {command_str}")
-
-            self.rpc_executor.submit(self._run_leader)
+            self._save_state()
+            print(f"[{self.node_id}] Leader received command (Index {last_log_index + 1}): {command_str}")
 
             return True, self.node_id
