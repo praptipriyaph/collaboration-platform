@@ -1,7 +1,7 @@
 
 # **Distributed Collaboration Platform - Final Submission**
 
-**Final Project (Milestone 1) for CS G623 Advanced Operating Systems, Semester I**  
+**Final Project for CS G623 Advanced Operating Systems, Semester I**  
 *By Ansh, Praptipriya Phukon, Tathya Sethi*
 
 This project is a high-availability, fault-tolerant collaboration system built in Python. It implements the **Raft consensus protocol** from scratch to manage a distributed state machine, uses **gRPC** for all inter-service communication, and integrates a **local LLM** for intelligent text assistance.
