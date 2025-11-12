@@ -1,5 +1,5 @@
 
-# **Distributed Collaboration Platform - Milestone 1 Submission**
+# **Distributed Collaboration Platform - Final Submission**
 
 **Final Project (Milestone 1) for CS G623 Advanced Operating Systems, Semester I**  
 *By Ansh, Praptipriya Phukon, Tathya Sethi*
