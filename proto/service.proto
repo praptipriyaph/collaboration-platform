@@ -1,139 +1,128 @@
 syntax = "proto3";
-
 package collaboration;
 
-// --- Original Service Messages ---
+// Original Service Messages
 
 message LoginRequest {
-    string username = 1;
-    string password = 2;
+    string username=1;
+    string password=2;
 }
 
 message LoginResponse {
-    string status = 1;
-    string token = 2;
+    string status=1;
+    string token=2;
 }
 
 message LogoutRequest {
-    string token = 1;
+    string token=1;
 }
 
 message StatusResponse {
-    string status = 1;
-    string message = 2;
+    string status=1;
+    string message=2;
 }
 
 message PostRequest {
-    string token = 1;
-    string type = 2;
-    string data = 3;
+    string token=1;
+    string type=2;
+    string data=3;
 }
 
 message GetRequest {
-    string token = 1;
-    string type = 2;
-    string params = 3;
-    string context = 4;
+    string token=1;
+    string type=2;
+    string params=3;
+    string context=4;
 }
 
 message DataItem {
-    string id = 1;
-    string data = 2;
+    string id=1;
+    string data=2;
 }
 
 message GetResponse {
-    string status = 1;
-    repeated DataItem items = 2;
+    string status=1;
+    repeated DataItem items=2;
 }
 
 message LLMRequest {
-    string request_id = 1;
-    string query = 2;
-    string context = 3;
+    string request_id=1;
+    string query=2;
+    string context=3;
 }
 
 message LLMResponse {
-    string request_id = 1;
-    string answer = 2;
+    string request_id=1;
+    string answer=2;
 }
 
-// --- New Real-time Streaming Messages ---
-
 message SubscribeRequest {
-    string token = 1;
+    string token=1;
 }
 
 message UpdateEvent {
-    // "CREATE" or "UPDATE"
-    string type = 1;
-    string doc_id = 2;
-    string user = 3;
-    string content = 4;
-    // We can also use this for presence: "JOIN", "LEAVE"
+    string type=1;
+    string doc_id=2;
+    string user=3;
+    string content=4;
 }
 
-// --- Raft Service Messages ---
+// Raft Service Messages
 
 message RequestVoteArgs {
     int32 term = 1;
-    string candidate_id = 2;
-    int32 last_log_index = 3;
-    int32 last_log_term = 4;
+    string candidate_id=2;
+    int32 last_log_index=3;
+    int32 last_log_term=4;
 }
 
 message RequestVoteReply {
-    int32 term = 1;
-    bool vote_granted = 2;
+    int32 term=1;
+    bool vote_granted=2;
 }
 
 message LogEntry {
-    int32 term = 1;
-    string command = 2;
+    int32 term=1;
+    string command=2;
 }
 
 message AppendEntriesArgs {
-    int32 term = 1;
-    string leader_id = 2;
-    int32 prev_log_index = 3;
-    int32 prev_log_term = 4;
-    repeated LogEntry entries = 5;
-    int32 leader_commit = 6;
+    int32 term=1;
+    string leader_id=2;
+    int32 prev_log_index=3;
+    int32 prev_log_term=4;
+    repeated LogEntry entries=5;
+    int32 leader_commit=6;
 }
 
 message AppendEntriesReply {
-    int32 term = 1;
-    bool success = 2;
-    int32 match_index = 3;
+    int32 term=1;
+    bool success=2;
+    int32 match_index=3;
 }
 
-// --- Snapshotting Messages ---
+// Snapshotting Messages
 
 message InstallSnapshotArgs {
-    int32 term = 1;
-    string leader_id = 2;
-    int32 last_snapshot_index = 3;
-    int32 last_snapshot_term = 4;
-    bytes snapshot_data = 5; // The JSON state as bytes
+    int32 term=1;
+    string leader_id=2;
+    int32 last_snapshot_index=3;
+    int32 last_snapshot_term=4;
+    bytes snapshot_data=5;
 }
 
 message InstallSnapshotReply {
-    int32 term = 1;
-    bool success = 2;
+    int32 term=1;
+    bool success=2;
 }
 
-
-
-
-// -----------------------------------------------------------------
 // Service Definitions
-// -----------------------------------------------------------------
 
 service CollaborationService {
     rpc Login(LoginRequest) returns (LoginResponse);
     rpc Logout(LogoutRequest) returns (StatusResponse);
     rpc Post(PostRequest) returns (StatusResponse);
     rpc Get(GetRequest) returns (GetResponse);
-    // NEW: Server streaming RPC
     rpc Subscribe(SubscribeRequest) returns (stream UpdateEvent);
 }
 

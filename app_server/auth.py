@@ -9,17 +9,17 @@ class AuthManager:
             "user1": self._hash_password("password1"),
             "user2": self._hash_password("password2"),
         }
-        self.sessions = {}
-        self.session_timeout = timedelta(hours=1)
+        self.sessions={}
+        self.session_timeout=timedelta(hours=1)
     
     def _hash_password(self, password):
         return hashlib.sha256(password.encode()).hexdigest()
     
     def authenticate(self, username, password):
         if username in self.users:
-            if self.users[username] == self._hash_password(password):
-                token = secrets.token_hex(16)
-                self.sessions[token] = {
+            if self.users[username]==self._hash_password(password):
+                token=secrets.token_hex(16)
+                self.sessions[token]={
                     "username": username,
                     "created": datetime.now()
                 }
@@ -28,8 +28,8 @@ class AuthManager:
     
     def validate_token(self, token):
         if token in self.sessions:
-            session = self.sessions[token]
-            if datetime.now() - session["created"] < self.session_timeout:
+            session=self.sessions[token]
+            if datetime.now()-session["created"]<self.session_timeout:
                 return True, session["username"]
             else:
                 del self.sessions[token]
@@ -43,7 +43,7 @@ class AuthManager:
 
     def apply_create_session(self, token, username):
         if token not in self.sessions:
-            self.sessions[token] = {
+            self.sessions[token]={
                 "username": username,
                 "created": datetime.now()
             }
@@ -57,8 +57,7 @@ class AuthManager:
         return False
 
     def get_state(self):
-        # Convert datetime objects to strings for JSON serialization
-        sessions_serializable = {
+        sessions_serializable={
             token: {
                 "username": data["username"],
                 "created": data["created"].isoformat()
@@ -67,12 +66,11 @@ class AuthManager:
         return {'sessions': sessions_serializable}
 
     def load_state(self, state):
-        sessions_raw = state.get('sessions', {})
-        # Convert string timestamps back to datetime objects
-        self.sessions = {
+        sessions_raw=state.get('sessions', {})
+        self.sessions={
             token: {
                 "username": data["username"],
                 "created": datetime.fromisoformat(data["created"])
             } for token, data in sessions_raw.items()
         }
-        print("✅ DEBUG: AuthManager state loaded from snapshot.")
+        print("DEBUG: AuthManager state loaded from snapshot.")
