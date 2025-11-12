@@ -29,6 +29,8 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
         self.document_manager = document_manager
         self.auth_manager = auth_manager
 
+        self.initial_peer_ids = peer_ids  # Store for first boot
+
         # --- File Paths ---
         self.state_file = f"raft_state_{node_id.replace(':', '_')}.json"
         self.snapshot_file = f"raft_snapshot_{node_id.replace(':', '_')}.json"
@@ -112,14 +114,14 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
     # -------------------------------------------------
 
     def _save_state(self):
-        """Saves current_term, voted_for, log, and snapshot indices to disk."""
         log_data = [{'term': e.term, 'command': e.command} for e in self.log]
         state = {
             'current_term': self.current_term,
             'voted_for': self.voted_for,
             'log': log_data,
             'last_snapshot_index': self.last_snapshot_index,
-            'last_snapshot_term': self.last_snapshot_term
+            'last_snapshot_term': self.last_snapshot_term,
+            'peer_ids': self.peer_ids  # <-- ADD THIS
         }
         try:
             with open(self.state_file, 'w') as f:
@@ -137,6 +139,7 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
                     self.voted_for = state.get('voted_for')
                     self.last_snapshot_index = state.get('last_snapshot_index', -1)
                     self.last_snapshot_term = state.get('last_snapshot_term', 0)
+                    self.peer_ids = state.get('peer_ids', self.initial_peer_ids)
 
                     self.commit_index = self.last_snapshot_index
                     self.last_applied = self.last_snapshot_index
@@ -152,6 +155,7 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
             except Exception as e:
                 print(f"[{self.node_id}] ⚠️ Failed to load state: {e}")
         else:
+            self.peer_ids = self.initial_peer_ids
             print(f"[{self.node_id}] No persistent state found. Starting fresh.")
 
     def _create_snapshot(self):
@@ -459,6 +463,10 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
                         if self.auth_manager.apply_delete_session(token):
                             self.document_manager.remove_active_user(username)
                             print(f"[{self.node_id}] Applied DELETE_SESSION for {username}")
+                elif cmd_type == "ADD_NODE":
+                    new_node_id = parts[1]
+                    self._add_peer(new_node_id)
+
             except Exception as e:
                 print(f"[{self.node_id}] Error applying log: {e}")
 
@@ -472,6 +480,33 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
                 callback(op_type, doc_id, user, content)
             except Exception as e:
                 print(f"Error in on_apply_callback: {e}")
+
+    def _add_peer(self, new_node_id):
+        """Adds a new peer to the cluster configuration."""
+        # The 'with self.lock:' line has been removed.
+        if new_node_id in self.peer_ids or new_node_id == self.node_id:
+            print(f"[{self.node_id}] Node {new_node_id} is already in peer list.")
+            return
+
+        print(f"[{self.node_id}] Applying config change: ADD_NODE {new_node_id}")
+        self.peer_ids.append(new_node_id)
+
+        # This node must create a stub for the new peer
+        # to send RPCs to it (e.g., RequestVote)
+        if new_node_id not in self.peer_stubs:
+            channel = grpc.insecure_channel(new_node_id)
+            self.peer_stubs[new_node_id] = service_pb2_grpc.RaftServiceStub(channel)
+
+        # If we are the leader, we must start tracking
+        # and replicating to this new node.
+        if self.state == "leader":
+            last_log_index, _ = self._get_last_log_index_term()
+            self.next_index[new_node_id] = last_log_index + 1
+            self.match_index[new_node_id] = -1
+            print(f"[{self.node_id}] Leader: Initialized tracking for new peer {new_node_id}")
+
+        # Persist the new configuration
+        self._save_state()
 
     def _step_down(self, new_term):
         """MUST be called *while holding self.lock*."""

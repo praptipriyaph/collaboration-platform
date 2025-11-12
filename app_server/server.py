@@ -28,6 +28,22 @@ class CollaborationServicer(service_pb2_grpc.CollaborationServiceServicer):
 
         print("Application Server initialized")
 
+    def _get_not_leader_response(self, response_type):
+
+        # Get all known nodes (peers + self) and de-duplicate
+        peers = list(self.raft_node.peer_ids) + [self.raft_node.node_id]
+        peer_str = ",".join(list(dict.fromkeys(peers)))
+
+        leader_id = self.raft_node.leader_id
+        msg = f"NOT_LEADER|leader_id={leader_id}|peers={peer_str}"
+
+        if response_type == "Login":
+            return service_pb2.LoginResponse(status=msg, token="")
+        elif response_type == "Post":
+            return service_pb2.StatusResponse(status="FAILURE", message=msg)
+
+        return service_pb2.StatusResponse(status="FAILURE", message=msg)
+
         # Callback triggered by RaftNode when a log entry is committed & applied
     def on_raft_apply(self, op_type, doc_id, user, content):
         event = service_pb2.UpdateEvent(
@@ -76,8 +92,9 @@ class CollaborationServicer(service_pb2_grpc.CollaborationServiceServicer):
 
     def Login(self, request, context):
         if self.raft_node.state != "leader":
-            context.abort(grpc.StatusCode.UNAVAILABLE, "Not leader")
-            return service_pb2.LoginResponse()
+            # OLD: context.abort(grpc.StatusCode.UNAVAILABLE, "Not leader")
+            # NEW:
+            return self._get_not_leader_response("Login")
 
         print(f"Login attempt: {request.username}")
         # 1. Authenticate the password (this is not replicated)
@@ -93,12 +110,17 @@ class CollaborationServicer(service_pb2_grpc.CollaborationServiceServicer):
                 return service_pb2.LoginResponse(status="SUCCESS", token=token)
             else:
                 self.auth_manager.logout(token)  # Clean up local token
-                return service_pb2.LoginResponse(status="FAILURE", token="")
+                # Handle edge case where leader changes mid-login
+                return self._get_not_leader_response("Login")
         else:
             print(f"Login failed: {request.username}")
-            return service_pb2.LoginResponse(status="FAILURE", token="")
+            return service_pb2.LoginResponse(status="FAILURE", message="Invalid credentials", token="")
 
     def Logout(self, request, context):
+        # NEW Leader Check
+        if self.raft_node.state != "leader":
+            return self._get_not_leader_response("Post")
+
         valid, username = self.auth_manager.validate_token(request.token)
         if valid:
             # 1. Submit session deletion to the Raft log
@@ -137,6 +159,11 @@ class CollaborationServicer(service_pb2_grpc.CollaborationServiceServicer):
             doc_id = request.data
             command_str = f"UNLOCK|{doc_id}|{username}"
 
+        elif request.type == "add_node":  # Your new feature
+            new_node_id = request.data
+            print(f"[{self.raft_node.node_id}] Received admin request to add node: {new_node_id}")
+            command_str = f"ADD_NODE|{new_node_id}"
+
         if not command_str:
             return service_pb2.StatusResponse(status="FAILURE", message="Invalid request")
 
@@ -145,7 +172,9 @@ class CollaborationServicer(service_pb2_grpc.CollaborationServiceServicer):
         if success:
             return service_pb2.StatusResponse(status="SUCCESS", message="Request submitted")
         else:
-            return service_pb2.StatusResponse(status="FAILURE", message=f"Not leader. Try connecting to: {leader_id}")
+            # OLD: return service_pb2.StatusResponse(status="FAILURE", message=f"Not leader. Try connecting to: {leader_id}")
+            # NEW:
+            return self._get_not_leader_response("Post")
 
     def Get(self, request, context):
         valid, username = self.auth_manager.validate_token(request.token)
@@ -225,3 +254,4 @@ def serve(node_id, peer_ids):
     raft_thread = threading.Thread(target=raft_node.run, daemon=True)
     raft_thread.start()
     server.wait_for_termination()
+

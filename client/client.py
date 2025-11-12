@@ -65,9 +65,8 @@ class CollaborationClient:
                          print(f"\n👋 [ALERT] User '{event.user}' has joined.")
                     elif event.type == "LEAVE":
                          print(f"\n🚪 [ALERT] User '{event.user}' has left.")
-                    # ----------------------------
 
-                    print("\nChoice: ", end="", flush=True)
+                    #print("\nChoice: ", end="", flush=True)
 
             except grpc.RpcError:
                 time.sleep(2)
@@ -80,63 +79,90 @@ class CollaborationClient:
             current_node_index = self.server_addresses.index(self.current_leader_address)
         except ValueError:
             current_node_index = 0
+            if not self.server_addresses:
+                print("✗ Error: No server addresses configured.")
+                return None
             self.connect(self.server_addresses[0])
 
         for attempt in range(max_retries):
             try:
+                # 1. Make the RPC call
                 rpc_call = getattr(self.stub, rpc_method_name)
                 response = rpc_call(request)
 
+                # 2. Check for success
                 if response.status == "SUCCESS":
                     return response
 
-                leader_redirect = False
-                redirect_address = None
+                # 3. Check for our new structured error in *both* fields
+                leader_message = None
 
-                if hasattr(response, 'message') and response.message.startswith("Not leader"):
-                    print(f"✗ {response.message}")
-                    leader_redirect = True
-                    redirect_address = response.message.split("Not leader. Try connecting to: ")[1]
+                # Check for NOT_LEADER in the 'status' field (for LoginResponse)
+                if response.status.startswith("NOT_LEADER|"):
+                    leader_message = response.status
+                # Check for NOT_LEADER in the 'message' field (for StatusResponse)
+                elif hasattr(response, 'message') and response.message.startswith("NOT_LEADER|"):
+                    leader_message = response.message
 
-                if leader_redirect:
-                    if redirect_address == "None":
-                        print("...No leader elected yet. Retrying in 2 seconds...")
-                        time.sleep(2)
+                if leader_message:
+                    print(f"✗ Node {self.current_leader_address} is a follower. Receiving cluster info...")
+                    parts = leader_message.split('|')
+                    new_leader = None
+                    new_peers = []
+
+                    for part in parts[1:]:
+                        if part.startswith("leader_id="):
+                            new_leader = part.split('=', 1)[1]
+                        if part.startswith("peers="):
+                            new_peers = part.split('=', 1)[1].split(',')
+
+                    # Update our internal list of servers
+                    if new_peers:
+                        print(f"...Updating known nodes to: {new_peers}")
+                        self.server_addresses = list(dict.fromkeys(new_peers))
+
+                    # Redirect to the new leader if we got a valid hint
+                    if new_leader and new_leader != "None" and new_leader in self.server_addresses:
+                        print(f"...Redirecting to new leader at {new_leader}...")
+                        self.connect(new_leader)
+                        # Re-calculate index for the retry loop
+                        current_node_index = self.server_addresses.index(new_leader)
+                        continue  # Retry immediately with the new leader
                     else:
-                        if redirect_address in self.server_addresses:
-                            print(f"...Redirecting to new leader at {redirect_address}...")
-                            self.connect(redirect_address)
-                        else:
-                            print(f"✗ Error: Leader {redirect_address} not in known server list.")
-                            return None
-                    continue
+                        print("...No valid leader hint. Trying next known node...")
 
-                if hasattr(response, 'message') and response.message == "Invalid token":
+                # 4. Check for other known errors
+                elif hasattr(response, 'message') and response.message == "Invalid token":
                     print("✗ Session token is invalid (leader may have changed).")
                     print("Please log in again to establish a new session.")
                     self.token = None
                     self.username = None
                     return None
 
-                if hasattr(response, 'message'):
+                # 5. Generic server-side failure
+                elif hasattr(response, 'message'):
                     print(f"✗ Server Error: {response.message}")
                 else:
                     print(f"✗ Server returned status: {response.status}")
-                return None
+                return None  # Return None on logical failures
 
             except grpc.RpcError as e:
+                # 6. Handle nodes that are *actually* offline
                 if e.code() == grpc.StatusCode.UNAVAILABLE:
                     print(f"✗ Node {self.current_leader_address} is unavailable.")
-                    current_node_index = (current_node_index + 1) % len(self.server_addresses)
-                    next_node_address = self.server_addresses[current_node_index]
-                    print(f"...Trying next node: {next_node_address}...")
-                    self.connect(next_node_address)
                 else:
                     print(f"✗ gRPC Error: {e.details()}")
-                    time.sleep(1)
+
             except Exception as e:
                 print(f"✗ Client-side error: {e}")
                 return None
+
+            # 7. If we're here, it was a connection failure. Try the next node.
+            current_node_index = (current_node_index + 1) % len(self.server_addresses)
+            next_node_address = self.server_addresses[current_node_index]
+            print(f"...Trying next node: {next_node_address}...")
+            self.connect(next_node_address)
+            time.sleep(1)  # Give it a moment
 
         print("✗ Command failed after all retries. Is the cluster down?")
         return None
@@ -286,6 +312,7 @@ class CollaborationClient:
                 print("9. View Document History")
                 print("10. Logout")
                 print("11. Exit")
+                print("12. Add node")
 
                 choice = input("\nChoice: ")
                 if choice == "1":
@@ -318,7 +345,14 @@ class CollaborationClient:
                 elif choice == "11":
                     if self.token: self.logout()
 
-                    break
+                elif choice == "12":
+                    new_id = input("Enter new node ID (e.g. localhost:50056): ")
+                    if not self.token: return
+                    request = service_pb2.PostRequest(token=self.token, type="add_node", data=new_id)
+                    res = self._execute_rpc("Post", request)
+                    if res: print(f"✓ {res.message}")
+
+                    #break
 
 
 def main():
