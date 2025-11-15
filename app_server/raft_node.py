@@ -397,6 +397,10 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
                     if self.document_manager.release_lock(doc_id, username):
                         self._notify_listeners("UNLOCK", doc_id, username, "")
 
+                elif cmd_type == "EDITING":
+                    doc_id, username = parts[1], parts[2]
+                    self._notify_listeners("EDITING", doc_id, username, "")
+
                 elif cmd_type=="CREATE_SESSION":
                     token, username=parts[1], parts[2]
                     self.auth_manager.apply_create_session(token, username)

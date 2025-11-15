@@ -50,6 +50,8 @@ class CollaborationClient:
 
                     if event.type=="CREATE":
                         print(f"\n[ALERT] User '{event.user}' created document {event.doc_id[:8]}...")
+                    elif event.type == "EDITING":
+                        print(f"\n[ALERT] User '{event.user}' is editing document {event.doc_id[:8]}...")
                     elif event.type=="UPDATE":
                         print(f"\n[ALERT] User '{event.user}' updated document {event.doc_id[:8]}...")
                     elif event.type=="LOCK":
@@ -205,6 +207,11 @@ class CollaborationClient:
         res=self._execute_rpc("Post", request)
         if res: print(f"{res.message}")
 
+    def notify_editing(self, doc_id):
+        if not self.token: return
+        request = service_pb2.PostRequest(token=self.token, type="editing", data=doc_id)
+        self._execute_rpc("Post", request)
+
     def lock_document(self, doc_id):
         if not self.token: return
         request=service_pb2.PostRequest(token=self.token, type="lock", data=doc_id)
@@ -318,7 +325,11 @@ class CollaborationClient:
                 if choice=="1":
                     self.create_document(input("Document content:"))
                 elif choice=="2":
-                    self.update_document(input("Document ID:"), input("New content:"))
+                    doc_id = input("Document ID: ")
+                    print(">> Sending edit notification to other users...")
+                    self.notify_editing(doc_id)
+                    content = input("New content: ")
+                    self.update_document(doc_id, content)
                 elif choice=="3":
                     action=input("Enter 'l' to lock or 'u' to unlock:").lower()
                     doc_id=input("Enter Document ID:")

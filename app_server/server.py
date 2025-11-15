@@ -149,6 +149,10 @@ class CollaborationServicer(service_pb2_grpc.CollaborationServiceServicer):
                 doc_id, content=parts
                 command_str=f"UPDATE|{doc_id}|{content}|{username}"
 
+        elif request.type == "editing":
+            doc_id = request.data
+            command_str = f"EDITING|{doc_id}|{username}"
+
         elif request.type=="lock":
             doc_id=request.data
             command_str=f"LOCK|{doc_id}|{username}"
