@@ -396,11 +396,14 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
                     doc_id, username=parts[1], parts[2]
                     if self.document_manager.release_lock(doc_id, username):
                         self._notify_listeners("UNLOCK", doc_id, username, "")
+
                 elif cmd_type=="CREATE_SESSION":
                     token, username=parts[1], parts[2]
-                    if self.auth_manager.apply_create_session(token, username):
-                        self.document_manager.add_active_user(username)
-                        print(f"[{self.node_id}] Applied CREATE_SESSION for {username}")
+                    self.auth_manager.apply_create_session(token, username)
+                    self.document_manager.add_active_user(username)
+                    print(f"[{self.node_id}] Applied CREATE_SESSION for {username}")
+
+
                 elif cmd_type=="DELETE_SESSION":
                     token=parts[1]
                     valid, username=self.auth_manager.validate_token(token)
@@ -408,6 +411,7 @@ class RaftNode(service_pb2_grpc.RaftServiceServicer):
                         if self.auth_manager.apply_delete_session(token):
                             self.document_manager.remove_active_user(username)
                             print(f"[{self.node_id}] Applied DELETE_SESSION for {username}")
+
                 elif cmd_type=="ADD_NODE":
                     new_node_id=parts[1]
                     self._add_peer(new_node_id)

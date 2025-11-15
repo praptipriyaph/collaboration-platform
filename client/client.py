@@ -152,18 +152,28 @@ class CollaborationClient:
     def login(self, username, password):
         if self.listener_thread and self.listener_thread.is_alive():
             self.stop_listening.set()
+
+            if self.channel:
+                self.channel.close()
+
             self.listener_thread.join()
 
-        request=service_pb2.LoginRequest(username=username, password=password)
-        response=self._execute_rpc("Login", request)
+            self.connect(self.current_leader_address)
+
+        request = service_pb2.LoginRequest(username=username, password=password)
+        response = self._execute_rpc("Login", request)
 
         if response and response.status == "SUCCESS":
-            self.token=response.token
-            self.username=username
+            self.token = response.token
+            self.username = username
             print(f"Login successful! Welcome, {username}")
 
+            # Wait briefly for the Raft log to replicate the session creation
+            import time
+            time.sleep(1.0)
+
             self.stop_listening.clear()
-            self.listener_thread=threading.Thread(target=self._listen_loop, daemon=True)
+            self.listener_thread = threading.Thread(target=self._listen_loop, daemon=True)
             self.listener_thread.start()
             return True
         else:

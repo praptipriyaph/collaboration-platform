@@ -88,19 +88,27 @@ class CollaborationServicer(service_pb2_grpc.CollaborationServiceServicer):
             self._broadcast_event(leave_event)
 
     def Login(self, request, context):
-        if self.raft_node.state!="leader":
+        if self.raft_node.state != "leader":
             return self._get_not_leader_response("Login")
 
         print(f"Login attempt: {request.username}")
-        success, token=self.auth_manager.authenticate(request.username, request.password)
+        success, token = self.auth_manager.authenticate(request.username, request.password)
 
         if success:
-            command_str=f"CREATE_SESSION|{token}|{request.username}"
-            success, _=self.raft_node.submit_command(command_str)
+            command_str = f"CREATE_SESSION|{token}|{request.username}"
+            success, _ = self.raft_node.submit_command(command_str)
 
             if success:
-                print(f"Login successful: {request.username}, token submitted.")
-                return service_pb2.LoginResponse(status="SUCCESS",token=token)
+                import time
+                start_time = time.time()
+                # Wait up to 2 seconds for the user to appear in the active list
+                while time.time() - start_time < 2.0:
+                    if request.username in self.raft_node.document_manager.active_users:
+                        print(f"Login successful: {request.username}, session active.")
+                        return service_pb2.LoginResponse(status="SUCCESS", token=token)
+                    time.sleep(0.1)
+
+                return service_pb2.LoginResponse(status="SUCCESS", token=token)
             else:
                 self.auth_manager.logout(token)
                 return self._get_not_leader_response("Login")
@@ -165,9 +173,11 @@ class CollaborationServicer(service_pb2_grpc.CollaborationServiceServicer):
             return self._get_not_leader_response("Post")
 
     def Get(self, request, context):
+        print(f"Get request: type={request.type}, params={request.params}")
         valid, username=self.auth_manager.validate_token(request.token)
         if not valid:
-            return service_pb2.GetResponse(status="FAILURE",items=[])
+            print(f"Get request failed: Invalid token for {request.type}")  # Added logging
+            return service_pb2.GetResponse(status="FAILURE", items=[])
 
         doc_manager=self.raft_node.document_manager
 
@@ -191,6 +201,7 @@ class CollaborationServicer(service_pb2_grpc.CollaborationServiceServicer):
 
         elif request.type=="active_users":
             users=doc_manager.get_active_users()
+            print(f"Returning active users: {users}")  # Added logging
             items=[service_pb2.DataItem(id=str(i), data=user) for i, user in enumerate(users)]
             return service_pb2.GetResponse(status="SUCCESS", items=items)
 
