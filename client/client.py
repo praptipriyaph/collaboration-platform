@@ -291,53 +291,72 @@ class CollaborationClient:
                     break
             else:
                 print(f"\nLogged in as: {self.username} (Connected to {self.current_leader_address})")
-                print("1. Create Document")
-                print("2. Update Document")  # NEW
-                print("3. View All Documents")
-                print("4. View Active Users")
-                print("5. Query LLM (Generic - not context aware queries)")
-                print("6. Summarize Document (Context aware queries)")
-                print("7. Fix Grammar (Context aware queries)")
-                print("8. Lock/Unlock Document")
-                print("9. View Document History")
-                print("10. Logout")
-                print("11. Exit")
-                print("12. Add node")
 
-                choice = input("\nChoice: ")
+                print("\n--- Document Actions ---")
+                print("1.  Create Document")
+                print("2.  Update Document")
+                print("3.  Lock/Unlock Document")
+
+                print("\n--- View & History ---")
+                print("4.  View All Documents")
+                print("5.  View Document History")
+                print("6.  View Active Users")
+
+                print("\n--- AI Features ---")
+                print("7.  Query LLM (General)")
+                print("8.  Summarize Document")
+                print("9.  Fix Grammar")
+
+                print("\n--- System ---")
+                print("10. Add Node")
+                print("11. Logout")
+                print("12. Exit")
+
+                choice = input("\nSelect Option: ")
+
+
                 if choice=="1":
                     self.create_document(input("Document content:"))
                 elif choice=="2":
                     self.update_document(input("Document ID:"), input("New content:"))
                 elif choice=="3":
-                    self.get_documents()
-                elif choice=="4":
-                    self.get_active_users()
-                elif choice=="5":
-                    self.query_llm(input("Enter your query:"))
-                elif choice=="6":
-                    self.summarize_document(input("Enter Doc ID:"))
-                elif choice=="7":
-                    self.fix_grammar(input("Enter Doc ID:"))
-                elif choice=="8":
                     action=input("Enter 'l' to lock or 'u' to unlock:").lower()
                     doc_id=input("Enter Document ID:")
                     if action=='l':
                         self.lock_document(doc_id)
                     elif action=='u':
                         self.unlock_document(doc_id)
-                elif choice=="9":
+
+                elif choice=="4":
+                    self.get_documents()
+                elif choice=="5":
                     self.view_document_history(input("Enter Document ID:"))
+                elif choice=="6":
+                    self.get_active_users()
+
+
+                elif choice=="7":
+                    self.query_llm(input("Enter your query:"))
+                elif choice=="8":
+                    self.summarize_document(input("Enter Doc ID:"))
+                elif choice=="9":
+                    self.fix_grammar(input("Enter Doc ID:"))
+
+
                 elif choice=="10":
-                    self.logout()
-                elif choice=="11":
-                    if self.token: self.logout()
-                elif choice=="12":
                     new_id=input("Enter new node ID (e.g. localhost:50056): ")
                     if not self.token: return
                     request=service_pb2.PostRequest(token=self.token, type="add_node", data=new_id)
                     res=self._execute_rpc("Post", request)
                     if res: print(f"{res.message}")
+                elif choice=="11":
+                    self.logout()
+                elif choice=="12":
+                    if self.token:
+                        self.logout()
+                    print("Exiting client...")
+                    break
+
 
 def main():
     SERVER_NODES=["localhost:50053", "localhost:50054", "localhost:50055"]
