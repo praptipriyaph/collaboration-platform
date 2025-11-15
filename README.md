@@ -41,7 +41,7 @@ The system is designed to run as a 5-node distributed cluster, with each node as
     * A "smart" CLI client that connects to the cluster, automatically finds the leader, and subscribes to real-time event streams.
 Note: Multiple clients can interact with the system at the same time. Also, fuctionality to add App_Server nodes dynamically has also been implemented.
 
-## Quick Start (Setup, Deployment, and Usage)
+## Quick Start (Setup)
 
 ### 1. **Installation**
 
