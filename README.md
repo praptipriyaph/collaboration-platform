@@ -39,6 +39,7 @@ The system is designed to run as a 5-node distributed cluster, with each node as
     * One server will be elected **Leader** (handles all client writes) and the other two will be **Followers** (replicate the leader's log).
 * **Node 5: Client Node**
     * A "smart" CLI client that connects to the cluster, automatically finds the leader, and subscribes to real-time event streams.
+Note: Multiple clients can interact with the system at the same time. Also, fuctionality to add App_Server nodes dynamically has also been implemented.
 
 ## Quick Start (Setup, Deployment, and Usage)
 
@@ -63,12 +64,12 @@ The LLM server requires the TinyLlama GGUF model file.
 mkdir models
 
 # Download the model file (approx. 600MB)
-wget -P models/ [https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf](https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf)
+wget -P models/ https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
+
+#Update the path to the model in llm_server/server.py
 ```
 
 ### 3. **Generate gRPC Code**
-
-This step is typically run automatically by the run_ scripts, but you can run it manually to compile the service.proto file.
 
 ```bash
 python -m grpc_tools.protoc -Iproto --python_out=. --grpc_python_out=. proto/service.proto
