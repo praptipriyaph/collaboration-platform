@@ -4,7 +4,7 @@
 **Final Project for CS G623 Advanced Operating Systems, Semester I**  
 *By Ansh, Praptipriya Phukon, Tathya Sethi*
 
-This project is a high-availability, fault-tolerant collaboration system built in Python. It implements the **Raft consensus protocol** from scratch to manage a distributed state machine, uses **gRPC** for all inter-service communication, and integrates a **local LLM** for intelligent text assistance.
+This project is a high-availability, fault-tolerant collaboration system built in Python. It implements the **Raft consensus protocol** from scratch to manage a distributed state machine, uses **gRPC** for all inter-service communication, and integrates a **local LLM** (TinyLlama) for text assistance.
 
 This system allows multiple users to join a session, edit documents, and see all changes, locks, and presence events propagated in real-time. The cluster can survive node failures and even allows for new nodes to be added dynamically without any downtime.
 
